@@ -676,7 +676,21 @@ function fmtTime(ms){if(!isFinite(ms))return "\u2014";ms=Math.max(0,~~ms);
   const m=~~(ms/60000),sec=~~((ms%60000)/1000),mil=ms%1000;
   return m+"'"+String(sec).padStart(2,'0')+'"'+String(mil).padStart(3,'0');}
 const lerp=(a,b,t)=>a+(b-a)*t;
-function rngFactory(seed){let s=(seed>>>0)||1;return()=>{s^=s<<13;s^=s>>>17;s^=s<<5;return((s>>>0)/4294967296);};}
+/* ═══ SEED MIXING (plan part 4)
+   xorshift32 was seeded with the raw seed. Its first outputs are almost a
+   linear function of the seed, so small or structured seeds (1, 2, 3, the
+   1000+i*7919 magic-car seeds, anything counter-based) all rolled near-zero
+   opening draws — the same turn bias, hill amplitude and character. The seed
+   now passes through the MurmurHash3 finaliser first: a bijection on 32 bits,
+   so every distinct seed still gives a distinct stream, but neighbouring
+   seeds give unrelated ones. 32 bits remain enough — see
+   docs/ENGINE_AND_PROGRESSION_PLAN.md, part 4. */
+function _mix32(x){
+  x=(x^(x>>>16))>>>0; x=Math.imul(x,0x85ebca6b)>>>0;
+  x=(x^(x>>>13))>>>0; x=Math.imul(x,0xc2b2ae35)>>>0;
+  return (x^(x>>>16))>>>0;
+}
+function rngFactory(seed){let s=_mix32(((seed>>>0)^0x9e3779b9)>>>0)||1;return()=>{s^=s<<13;s^=s>>>17;s^=s<<5;return((s>>>0)/4294967296);};}
 function hsl(h,s,l,a){return a==null?`hsl(${(h%360+360)%360},${s}%,${l}%)`:`hsla(${(h%360+360)%360},${s}%,${l}%,${a})`;}
 const SIGN_TEXTS=['GO GO GO','FULL THROTTLE','ZONE STORM','NO LIFT','APEX AHEAD',
   'PUSH IT','REDLINE','HOLD THE LINE','SEND IT','NEXT LEFT: VICTORY',
@@ -880,6 +894,7 @@ function nightAmt(){
 function isNight(){
   // Daylight themes stay bright — a CLEAR SKIES track must never render as a
   // black night sky, which is what made every background look the same.
+  if(theme&&theme.forceNight)return true;
   if(theme&&theme.trackTheme&&theme.trackTheme.daylight)return false;
   const t=dayT();return t<0.22||t>0.80;
 }
@@ -1757,7 +1772,28 @@ function _themeForBiome(seed,biome){
   let h=Math.imul((seed>>>0)^0x5bd1e995,0x9e3779b1)>>>0; h=(h^(h>>>15))>>>0;
   return pool[h%pool.length];
 }
+/* ═══ THEME OVERRIDES THAT WERE NEVER READ
+   Super Racing's BIOME and WEATHER selectors wrote _forceBiome / _rainOdds /
+   _snowOdds / _sandOdds, and several presets wrote _forceNight, _snowClass and
+   _stormForce — but nothing read any of them, so those controls did nothing.
+   makeTheme now honours them (and _forceTheme, a palette by name), which is
+   also how World Tour signatures give a municipality its look. Forced values
+   are applied after the theme's own draws, so the stream — and everything
+   else about the seed — is unchanged. */
 function makeTheme(seed){
+  const th=_makeThemeImpl(seed);
+  const o=(typeof dm!=='undefined'&&dm&&dm._algoOverride)||null;
+  if(!o)return th;
+  const hf=(k)=>{ let h=Math.imul(((seed>>>0)^k)>>>0,0x9e3779b1)>>>0; h=(h^(h>>>15))>>>0; return h/4294967296; };
+  if(o._rainOdds!=null){ th.rain=hf(0x11)<+o._rainOdds; if(th.rain)th.wet=true; }
+  if(o._snowOdds!=null)th.snow=hf(0x22)<+o._snowOdds;
+  if(o._sandOdds!=null)th.sandForce=hf(0x33)<+o._sandOdds;
+  if(typeof o._snowClass==='string')th.snowClass=o._snowClass;
+  if(o._stormForce!=null&&isFinite(+o._stormForce))th.storm=Math.max(0,Math.min(1,+o._stormForce));
+  if(o._forceNight){ th.forceNight=true; th.timeT=0.93; dm._dayLock=null; }
+  return th;
+}
+function _makeThemeImpl(seed){
   let _hfTmp=null;   // shared between the heavyFog and timeT fields below
   const r=rngFactory(seed*2654435761>>>0);
   const _CH=CHAR_LOOK[charForSeed(seed)]||CHAR_LOOK.sweeper;
@@ -1767,9 +1803,14 @@ function makeTheme(seed){
     if(r()<0.30&&typeof CFG!=='undefined'&&CFG&&CFG._chosenBiome&&BIOME_DEFS[CFG._chosenBiome])
       biome=CFG._chosenBiome;
   }catch(e){}
+  {
+    const _fo=(typeof dm!=='undefined'&&dm&&dm._algoOverride)||null;
+    if(_fo&&typeof _fo._forceBiome==='string'&&BIOME_DEFS[_fo._forceBiome])biome=_fo._forceBiome;
+  }
   const B=BIOME_DEFS[biome];
   // Pick a track theme (every seed gets one; biome drives weather/particles)
-  const TT=_themeForBiome(seed,biome)||TRACK_THEMES[0];
+  const _ftName=(typeof dm!=='undefined'&&dm&&dm._algoOverride&&dm._algoOverride._forceTheme)||null;
+  const TT=(_ftName&&TRACK_THEMES.find(t=>t.name===_ftName))||_themeForBiome(seed,biome)||TRACK_THEMES[0];
   // Lock daylight themes to a daytime clock so shading agrees with the sky.
   if(TT.daylight&&dm.todOverride==null)dm._dayLock=0.34+((seed>>>7)%100)/100*0.28;
   else dm._dayLock=null;
@@ -2052,12 +2093,8 @@ function zoneAt(z){
 function _AO(key,dflt){
   const o=(typeof dm!=='undefined'&&dm&&dm._algoOverride)?dm._algoOverride:null;
   if(o&&o[key]!=null)return +o[key];
-// Otherwise the rolled default is steered by what the player has favourited and trashed.
-  try{
-    const _p=(typeof ALGO_PARAMS!=='undefined')&&ALGO_PARAMS.find(x=>x.k===key);
-    if(_p&&typeof applyFeedback==='function')
-      return applyFeedback(key,dflt,_p.min,_p.max);
-  }catch(e){}
+  /* No feedback steering here any more: see GENERATION NO LONGER BENDS TO
+     FEEDBACK. The ship default is the default. */
   return dflt;
 }
 /* ═══ SCENERY LAYERS — varied, cheap, palette-matched backdrops
@@ -2086,7 +2123,7 @@ const _SCN_KINDS={
   monoliths: {tier:'mid', biomes:['desert','lunar','mesa','haunted','canyon','savanna','alpine']}
 };
 function _scnHash(x){x=(x^0x61c88647)>>>0;x^=x>>>16;x=Math.imul(x,0x7feb352d)>>>0;x^=x>>>15;x=Math.imul(x,0x846ca68b)>>>0;x^=x>>>16;return x>>>0;}
-function _scnRand(seed){let s=(seed>>>0)||1;return function(){s^=s<<13;s>>>=0;s^=s>>>17;s^=s<<5;s>>>=0;return s/4294967296;};}
+function _scnRand(seed){let s=_mix32(seed>>>0)||1;return function(){s^=s<<13;s>>>=0;s^=s>>>17;s^=s<<5;s>>>=0;return s/4294967296;};}
 function sceneryPick(seed,biome){
   const fit=(tier)=>Object.keys(_SCN_KINDS).filter(k=>_SCN_KINDS[k].tier===tier&&(!_SCN_KINDS[k].biomes||_SCN_KINDS[k].biomes.indexOf(biome)>=0));
   const far=fit('far'), mid=fit('mid'), h1=_scnHash((seed>>>0)+0x1234567), h2=_scnHash((seed>>>0)+0x7654321);
@@ -2462,6 +2499,21 @@ function _spgOverlay(G,vw,vh,t){
   ctx.restore();
 }
 /* Road-surface colour for surface set pieces (null = normal road). */
+/* ═══ ROAD SURFACE MATERIALS (engine plan E9)
+   A segment may carry `surf`: its deck colour and, in updatePlayer, its
+   grip and rolling drag. Asphalt is the absence of a material. Ice slides,
+   sand drags, metal grating bites, glass shows the ground (or the void)
+   through it. Used by the SURFACE track types (plan part 3). */
+const SURFACES={
+  ice:  {grip:0.42,drag:0.000,col:(d,i)=>d?'hsl(196,52%,68%)':'hsl(196,60%,78%)'},
+  dirt: {grip:0.78,drag:0.035,col:(d,i)=>d?'hsl(26,38%,27%)':'hsl(28,42%,33%)'},
+  sand: {grip:0.70,drag:0.070,col:(d,i)=>d?'hsl(40,48%,54%)':'hsl(42,56%,62%)'},
+  metal:{grip:1.08,drag:0.000,col:(d,i)=>((i>>1)&1)?'hsl(210,10%,36%)':'hsl(210,8%,47%)'},
+  glass:{grip:0.92,drag:0.000,col:(d,i)=>(i%6===0)?'rgba(215,248,255,0.85)':(d?'rgba(110,190,255,0.34)':'rgba(160,220,255,0.28)')},
+  lava: {grip:0.95,drag:0.020,col:(d,i)=>'hsl('+(6+(i*7)%18)+',88%,'+(d?17:23)+'%)'},
+  grass:{grip:0.66,drag:0.050,col:(d,i)=>d?'hsl(104,44%,27%)':'hsl(108,50%,33%)'}
+};
+function _surfColor(s,dark){ const S=s.surf&&SURFACES[s.surf]; return S?S.col(dark,s.index|0):null; }
 function _spSurface(s,dark){
   const k=s._sp; if(k==null)return null; const kind=SP_KINDS[k], V=SP_VARIANTS[s._spV|0]||SP_VARIANTS[0], t=animNow()*V.spd;
   if(V.prism&&(kind==='lava'||kind==='disco'))return 'hsl('+((s.index*14+t*0.25)%360).toFixed(0)+',90%,50%)';
@@ -2706,7 +2758,7 @@ const _ECOTONE={forest:['alpine','wetland'],plains:['forest','wetland'],jungle:[
   alpine:['glacier','forest'],tundra:['arctic','wetland'],arctic:['glacier','tundra'],glacier:['arctic','tundra'],
   swamp:['forest','wetland'],wetland:['forest','swamp'],volcano:['canyon','mesa'],ocean:['islands','wetland'],
   islands:['jungle','ocean'],haunted:['forest','swamp']};
-function _envRand(seed){let s=(seed>>>0)||1;return function(){s^=s<<13;s>>>=0;s^=s>>>17;s^=s<<5;s>>>=0;return s/4294967296;};}
+function _envRand(seed){let s=_mix32(seed>>>0)||1;return function(){s^=s<<13;s>>>=0;s^=s>>>17;s^=s<<5;s>>>=0;return s/4294967296;};}
 /* Build the landscape for the finished track. Called at the end of buildTrack. */
 function buildEnvironment(seed,biome){
   const N=segments.length;
@@ -2714,7 +2766,7 @@ function buildEnvironment(seed,biome){
   const zones=_ENV_ZONES[biome]||_ENV_ZONES.forest;
   const R=_envRand((seed>>>0)^0x5ee7c0de);
   const per=new Array(N);                      // per-segment instance lists
-  const blocked=(sg)=>!sg||sg.tunnel||sg.tube||sg.underpass||sg.bridge||sg.gap||sg.water||sg.pit||sg.wallride||sg.pipe||sg.halfpipe||sg.flyover||sg.ramp;
+  const blocked=(sg)=>!sg||sg.tunnel||sg.tube||sg.underpass||sg.bridge||sg.gap||sg.water||sg.pit||sg.wallride||sg.pipe||sg.halfpipe||sg.flyover||sg.ramp||sg.voidDeck;
   // Zone for every segment: a hashed walk through the biome's environments.
   const zoneOf=new Uint8Array(N); let zi=Math.floor(R()*zones.length);
   for(let i=0;i<N;){ const len=400+Math.floor(R()*600); for(let k=0;k<len&&i<N;k++,i++)zoneOf[i]=zi; zi=(zi+1+Math.floor(R()*(zones.length-1)))%zones.length; }
@@ -3095,6 +3147,7 @@ function _envCleanProps(N){
   const bad=(sg,spr)=>{
     if(!spr)return false;
     const side=spr.side||0;
+    if(sg.voidDeck&&spr.veg!=='sign')return true;          // sky highway: open air beside the road
     if(side&&onWater(sg,side))return true;
     if(dm._roadFire&&spr.veg!=='sign'&&(spr.off||0)<2.6)return true;
     if(sg._tierSide&&side===sg._tierSide)return true;   // lower road of an overpass zone
@@ -3243,6 +3296,383 @@ function drawEnv(sp,vw,vh){
   }
   if(_occlA)ctx.globalAlpha=_a0;
 }
+/* ═══ GPU BATCH RASTERISER (engine plan E1-E3)
+   Measured before this existed: a race frame issued ~1,500 path fills and
+   400-800 rect fills on the 2D canvas, 80% of frame time being raster and
+   command submission rather than JavaScript. Almost all of them come from
+   the segment loop: ground bands, road deck, rumble strips, lane markings,
+   fog bands — flat-coloured quads, thousands of tiny draw calls.
+   This module is a Canvas2D-COMPATIBLE SHIM swapped in for `ctx` for the
+   duration of that loop. Nothing in the loop's drawing code changes:
+     • fill() of move/line/rect paths and fillRect() with a flat colour or a
+       2-stop linear gradient, under source-over and a rectangular clip, are
+       triangulated into ONE vertex buffer and drawn by ONE WebGL call;
+     • anything else (arcs, strokes, images, text, radial gradients, other
+       blend modes, non-rect clips) flushes the batch to the real canvas and
+       is forwarded unchanged, so draw order is always exactly preserved;
+     • clips are evaluated per pixel in the fragment shader in user space, so
+       they survive the roll/shake transform the frame applies.
+   The result is composited with a single drawImage per flush. If a frame
+   needs too many flushes to be worth it, or WebGL is unavailable, the shim
+   steps aside and the loop draws straight to the 2D canvas as before.
+   Toggle: window.ZS_GPU_BATCH=false (or DriveMode.engine({batch:false})). */
+const GLBatch=(function(){
+  let cv=null,gl=null,prog=null,vbo=null,L=null,uRes=null,ok=null,real=null;
+  let data=new Float32Array(12*6*2048), n=0;
+  const stats={flushes:0,verts:0,batched:0,passed:0,frames:0,disabledFor:''};
+  let badFrames=0, disabled=false;
+  /* ═══ GPU TIER (engine plan E6) — a software rasteriser (SwiftShader,
+     llvmpipe, Microsoft Basic Render) runs WebGL on the CPU, where batching
+     costs more than it saves. Detected once from the unmasked renderer. */
+  let gpu=null;
+  function gpuInfo(){
+    if(gpu)return gpu;
+    gpu={renderer:'unknown',software:false};
+    try{ if(!init())return gpu;
+      const ext=gl.getExtension('WEBGL_debug_renderer_info');
+      const r=String(ext?gl.getParameter(ext.UNMASKED_RENDERER_WEBGL):gl.getParameter(gl.RENDERER));
+      gpu.renderer=r; gpu.software=/swiftshader|llvmpipe|software|basic render|softpipe/i.test(r);
+    }catch(e){}
+    return gpu;
+  }
+  /* ═══ LIVE CALIBRATION (engine plan E7) — the only honest way to know
+     whether batching wins on THIS machine is to measure it. The segment loop
+     is timed with batching on and off for 40 frames each; the faster mode is
+     kept and the contest is re-run every ~40 s so a thermal throttle, a tab
+     resize or a different track cannot leave the wrong choice in place. */
+  const cal={phase:0,count:0,on:[],off:[],prefer:true,next:0};
+  function calWant(){
+    if(cal.phase===0){ cal.phase=1; cal.count=0; cal.on.length=0; cal.off.length=0; }
+    if(cal.phase===1)return true;
+    if(cal.phase===2)return false;
+    return cal.prefer;
+  }
+  function calNote(on,ms){
+    if(!(ms>=0))return;
+    if(cal.phase===1){ cal.on.push(ms); if(++cal.count>=40){ cal.phase=2; cal.count=0; } }
+    else if(cal.phase===2){ cal.off.push(ms); if(++cal.count>=40){
+      const med=(a)=>{ const b=a.slice().sort((x,y)=>x-y); return b[b.length>>1]||0; };
+      const mOn=med(cal.on), mOff=med(cal.off);
+      cal.prefer=mOn<=mOff*1.02; cal.lastOn=mOn; cal.lastOff=mOff;
+      cal.phase=3; cal.count=0; } }
+    else if(cal.phase===3){ if(++cal.count>=2400){ cal.phase=0; } }
+  }
+  const colCache=new Map(); let _pcv=null,_pcx=null;
+  function init(){
+    if(ok!==null)return ok;
+    ok=false;
+    try{
+      cv=document.createElement('canvas');
+      gl=cv.getContext('webgl',{alpha:true,premultipliedAlpha:true,antialias:true,preserveDrawingBuffer:true,depth:false,stencil:false});
+      if(!gl)return false;
+      const sh=(t,src)=>{const o=gl.createShader(t);gl.shaderSource(o,src);gl.compileShader(o);
+        if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(o));return o;};
+      prog=gl.createProgram();
+      gl.attachShader(prog,sh(gl.VERTEX_SHADER,
+        'attribute vec2 aP;attribute vec2 aU;attribute vec4 aC;attribute vec4 aK;uniform vec2 uR;'+
+        'varying vec2 vU;varying vec4 vC;varying vec4 vK;'+
+        'void main(){vec2 c=aP/uR*2.0-1.0;gl_Position=vec4(c.x,-c.y,0.0,1.0);vU=aU;vC=aC;vK=aK;}'));
+      gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,
+        'precision mediump float;varying vec2 vU;varying vec4 vC;varying vec4 vK;'+
+        'void main(){if(vU.x<vK.x||vU.y<vK.y||vU.x>vK.z||vU.y>vK.w)discard;gl_FragColor=vC;}'));
+      gl.linkProgram(prog);
+      if(!gl.getProgramParameter(prog,gl.LINK_STATUS))throw new Error('link');
+      L={p:gl.getAttribLocation(prog,'aP'),u:gl.getAttribLocation(prog,'aU'),
+         c:gl.getAttribLocation(prog,'aC'),k:gl.getAttribLocation(prog,'aK')};
+      uRes=gl.getUniformLocation(prog,'uR');
+      vbo=gl.createBuffer();
+      ok=true;
+    }catch(e){ ok=false; stats.disabledFor='init: '+(e&&e.message); }
+    return ok;
+  }
+  /* CSS colour -> premultiplied-ready [r,g,b,a] in 0..1, cached. */
+  function parseCol(str){
+    let c=colCache.get(str); if(c)return c;
+    c=null; const t=String(str).trim();
+    let m;
+    if(t[0]==='#'){
+      const h=t.slice(1);
+      if(h.length===3||h.length===4){ c=[parseInt(h[0]+h[0],16)/255,parseInt(h[1]+h[1],16)/255,parseInt(h[2]+h[2],16)/255,h.length===4?parseInt(h[3]+h[3],16)/255:1]; }
+      else if(h.length===6||h.length===8){ c=[parseInt(h.slice(0,2),16)/255,parseInt(h.slice(2,4),16)/255,parseInt(h.slice(4,6),16)/255,h.length===8?parseInt(h.slice(6,8),16)/255:1]; }
+    } else if((m=/^rgba?\(\s*([-\d.]+)\s*,\s*([-\d.]+)\s*,\s*([-\d.]+)\s*(?:,\s*([-\d.]+)\s*)?\)$/.exec(t))){
+      c=[+m[1]/255,+m[2]/255,+m[3]/255,m[4]!=null?+m[4]:1];
+    } else if((m=/^hsla?\(\s*([-\d.]+)\s*,\s*([-\d.]+)%\s*,\s*([-\d.]+)%\s*(?:,\s*([-\d.]+)\s*)?\)$/.exec(t))){
+      const H=((+m[1]%360)+360)%360/360, S=Math.max(0,Math.min(1,+m[2]/100)), Lt=Math.max(0,Math.min(1,+m[3]/100));
+      const q=Lt<0.5?Lt*(1+S):Lt+S-Lt*S, p=2*Lt-q;
+      const f=(tt)=>{ tt=(tt%1+1)%1; return tt<1/6?p+(q-p)*6*tt:tt<0.5?q:tt<2/3?p+(q-p)*(2/3-tt)*6:p; };
+      c=[f(H+1/3),f(H),f(H-1/3),m[4]!=null?+m[4]:1];
+    }
+    if(!c){
+      try{ if(!_pcx){ _pcv=document.createElement('canvas'); _pcv.width=_pcv.height=1; _pcx=_pcv.getContext('2d'); }
+        _pcx.clearRect(0,0,1,1); _pcx.fillStyle='#000'; _pcx.fillStyle=t; _pcx.fillRect(0,0,1,1);
+        const d=_pcx.getImageData(0,0,1,1).data; c=[d[0]/255,d[1]/255,d[2]/255,d[3]/255];
+      }catch(e){ c=[0,0,0,1]; }
+    }
+    for(let i=0;i<4;i++)if(!isFinite(c[i]))c[i]=0;
+    c[3]=Math.max(0,Math.min(1,c[3]));
+    if(colCache.size>6000)colCache.clear();
+    colCache.set(str,c); return c;
+  }
+  // ── shim state
+  let fs='#000', ga=1, gco='source-over', filt='none', sb=0;
+  let M=[1,0,0,1,0,0];
+  let clip=[-1e9,-1e9,1e9,1e9], clipM=null;
+  let cx=-1, depth=0;             // cx>=0: complex-clip passthrough entered at this depth
+  const stack=[];
+  // ── path record: codes 0 move,1 line,2 close,3 rect,9 complex(index)
+  let PC=new Float64Array(8192), pn=0, pComplex=false; const pX=[];
+  function pcPush(a,b,c2,d,e){ if(pn+5>=PC.length){const q=new Float64Array(PC.length*2);q.set(PC);PC=q;}
+    PC[pn++]=a; if(b!==undefined){PC[pn++]=b;PC[pn++]=c2;} if(d!==undefined){PC[pn++]=d;PC[pn++]=e;} }
+  function replay(){
+    real.beginPath();
+    for(let i=0;i<pn;){
+      const k=PC[i];
+      if(k===0){ real.moveTo(PC[i+1],PC[i+2]); i+=3; }
+      else if(k===1){ real.lineTo(PC[i+1],PC[i+2]); i+=3; }
+      else if(k===2){ real.closePath(); i+=1; }
+      else if(k===3){ real.rect(PC[i+1],PC[i+2],PC[i+3],PC[i+4]); i+=5; }
+      else { const o=pX[PC[i+1]]; real[o.m].apply(real,o.a); i+=2; }
+    }
+  }
+  function sameM(a,b){ return a&&b&&a[0]===b[0]&&a[1]===b[1]&&a[2]===b[2]&&a[3]===b[3]&&a[4]===b[4]&&a[5]===b[5]; }
+  function flush(){
+    if(!n)return;
+    const W=cv.width,H=cv.height;
+    gl.viewport(0,0,W,H);
+    gl.useProgram(prog);
+    gl.bindBuffer(gl.ARRAY_BUFFER,vbo);
+    gl.bufferData(gl.ARRAY_BUFFER,data.subarray(0,n),gl.STREAM_DRAW);
+    const B=48;
+    gl.enableVertexAttribArray(L.p); gl.vertexAttribPointer(L.p,2,gl.FLOAT,false,B,0);
+    gl.enableVertexAttribArray(L.u); gl.vertexAttribPointer(L.u,2,gl.FLOAT,false,B,8);
+    gl.enableVertexAttribArray(L.c); gl.vertexAttribPointer(L.c,4,gl.FLOAT,false,B,16);
+    gl.enableVertexAttribArray(L.k); gl.vertexAttribPointer(L.k,4,gl.FLOAT,false,B,32);
+    gl.uniform2f(uRes,W,H);
+    gl.enable(gl.BLEND); gl.blendFunc(gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
+    gl.drawArrays(gl.TRIANGLES,0,n/12);
+    real.save(); real.setTransform(1,0,0,1,0,0); real.globalAlpha=1;
+    real.globalCompositeOperation='source-over'; real.drawImage(cv,0,0); real.restore();
+    gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT);
+    stats.flushes++; stats.verts+=n/12; n=0;
+  }
+  function vtx(ux,uy,r,g,b,a){
+    if(n+12>data.length){ const q=new Float32Array(data.length*2); q.set(data); data=q; }
+    const d=data;
+    d[n]=M[0]*ux+M[2]*uy+M[4]; d[n+1]=M[1]*ux+M[3]*uy+M[5];
+    d[n+2]=ux; d[n+3]=uy; d[n+4]=r*a; d[n+5]=g*a; d[n+6]=b*a; d[n+7]=a;
+    d[n+8]=clip[0]; d[n+9]=clip[1]; d[n+10]=clip[2]; d[n+11]=clip[3]; n+=12;
+  }
+  /* Colour of the current fillStyle at a user-space point, or null if the
+     style cannot be batched. */
+  function styleAt(x,y){
+    if(typeof fs==='string'){ return parseCol(fs); }
+    if(fs&&fs.__zsg){
+      const G=fs; if(G.stops.length!==2||G.stops[0][0]!==0||G.stops[1][0]!==1)return null;
+      const dx=G.x1-G.x0, dy=G.y1-G.y0, L2=dx*dx+dy*dy; if(L2<1e-9)return null;
+      const t=((x-G.x0)*dx+(y-G.y0)*dy)/L2;
+      if(t<-0.02||t>1.02)return null;
+      const tt=Math.max(0,Math.min(1,t)), A=parseCol(G.stops[0][1]), Bc=parseCol(G.stops[1][1]);
+      return [A[0]+(Bc[0]-A[0])*tt,A[1]+(Bc[1]-A[1])*tt,A[2]+(Bc[2]-A[2])*tt,A[3]+(Bc[3]-A[3])*tt];
+    }
+    return null;
+  }
+  function batchable(){
+    return cx<0&&gco==='source-over'&&filt==='none'&&!sb&&(clipM===null||sameM(clipM,M));
+  }
+  /* Triangulate the recorded path (fan per subpath). Returns false if any
+     vertex's style cannot be batched. */
+  const TP=[]; 
+  function fillPath(){
+    if(pComplex||!batchable())return false;
+    const polys=[]; let cur=null;
+    for(let i=0;i<pn;){
+      const k=PC[i];
+      if(k===0){ cur=[PC[i+1],PC[i+2]]; polys.push(cur); i+=3; }
+      else if(k===1){ if(!cur){cur=[];polys.push(cur);} cur.push(PC[i+1],PC[i+2]); i+=3; }
+      else if(k===2){ cur=null; i+=1; }
+      else if(k===3){ const x=PC[i+1],y=PC[i+2],w=PC[i+3],h=PC[i+4]; polys.push([x,y,x+w,y,x+w,y+h,x,y+h]); cur=null; i+=5; }
+      else return false;
+    }
+    // resolve colours first so a non-batchable style aborts cleanly
+    TP.length=0;
+    const flat=(typeof fs==='string')?parseCol(fs):null;
+    for(const pg of polys){ if(pg.length<6)continue;
+      for(let j=0;j<pg.length;j+=2){ const c=flat||styleAt(pg[j],pg[j+1]); if(!c)return false; TP.push(c); } }
+    let ci=0;
+    for(const pg of polys){ if(pg.length<6)continue;
+      const base=ci; const nv=pg.length/2;
+      for(let j=1;j<nv-1;j++){
+        const c0=TP[base],c1=TP[base+j],c2=TP[base+j+1];
+        vtx(pg[0],pg[1],c0[0],c0[1],c0[2],c0[3]*ga);
+        vtx(pg[j*2],pg[j*2+1],c1[0],c1[1],c1[2],c1[3]*ga);
+        vtx(pg[j*2+2],pg[j*2+3],c2[0],c2[1],c2[2],c2[3]*ga);
+      }
+      ci+=nv;
+    }
+    stats.batched++;
+    return true;
+  }
+  function withClip(fn){
+    const inf=(clip[0]<=-1e8&&clip[1]<=-1e8&&clip[2]>=1e8&&clip[3]>=1e8);
+    if(inf||!clipM){ return fn(); }
+    real.save(); real.setTransform(clipM[0],clipM[1],clipM[2],clipM[3],clipM[4],clipM[5]);
+    real.beginPath(); real.rect(clip[0],clip[1],clip[2]-clip[0],clip[3]-clip[1]); real.clip();
+    real.setTransform(M[0],M[1],M[2],M[3],M[4],M[5]);
+    try{ return fn(); } finally{ real.restore(); }
+  }
+  function pass(fnName,args,needPath){
+    stats.passed++;
+    if(cx>=0){ if(needPath)replay(); return real[fnName].apply(real,args); }
+    flush();
+    return withClip(()=>{ if(needPath)replay(); return real[fnName].apply(real,args); });
+  }
+  // ── the shim object
+  const shim={};
+  const PATH={moveTo:0,lineTo:1};
+  shim.moveTo=function(x,y){ if(cx>=0)return real.moveTo(x,y); pcPush(0,x,y); };
+  shim.lineTo=function(x,y){ if(cx>=0)return real.lineTo(x,y); pcPush(1,x,y); };
+  shim.closePath=function(){ if(cx>=0)return real.closePath(); pcPush(2); };
+  shim.rect=function(x,y,w,h){ if(cx>=0)return real.rect(x,y,w,h); pcPush(3,x,y,w,h); };
+  shim.beginPath=function(){ if(cx>=0)return real.beginPath(); pn=0; pComplex=false; pX.length=0; };
+  for(const m of ['arc','arcTo','ellipse','quadraticCurveTo','bezierCurveTo','roundRect']){
+    shim[m]=function(){ if(cx>=0)return real[m].apply(real,arguments);
+      pX.push({m,a:Array.prototype.slice.call(arguments)}); pcPush(9); PC[pn++]=pX.length-1; pComplex=true; };
+  }
+  shim.fill=function(){
+    if(arguments.length&&typeof arguments[0]!=='string')return pass('fill',arguments,false);   // Path2D
+    if(arguments.length&&arguments[0]==='evenodd')return pass('fill',arguments,true);
+    if(fillPath())return;
+    return pass('fill',arguments,true);
+  };
+  shim.fillRect=function(x,y,w,h){
+    if(batchable()&&isFinite(x+y+w+h)){
+      let c0,c1,c2,c3;
+      if(typeof fs==='string'){ c0=c1=c2=c3=parseCol(fs); }
+      else { c0=styleAt(x,y); c1=styleAt(x+w,y); c2=styleAt(x+w,y+h); c3=styleAt(x,y+h); }
+      if(c0&&c1&&c2&&c3){
+        vtx(x,y,c0[0],c0[1],c0[2],c0[3]*ga); vtx(x+w,y,c1[0],c1[1],c1[2],c1[3]*ga); vtx(x+w,y+h,c2[0],c2[1],c2[2],c2[3]*ga);
+        vtx(x,y,c0[0],c0[1],c0[2],c0[3]*ga); vtx(x+w,y+h,c2[0],c2[1],c2[2],c2[3]*ga); vtx(x,y+h,c3[0],c3[1],c3[2],c3[3]*ga);
+        stats.batched++; return;
+      }
+    }
+    return pass('fillRect',arguments,false);
+  };
+  shim.clip=function(){
+    if(cx>=0){ if(arguments.length)return real.clip.apply(real,arguments); return real.clip(); }
+    // a single rect path under the current transform is kept in the shader
+    if(!arguments.length&&!pComplex&&pn===5&&PC[0]===3&&(clipM===null||sameM(clipM,M)||(clip[0]<=-1e8))){
+      const x0=Math.min(PC[1],PC[1]+PC[3]),y0=Math.min(PC[2],PC[2]+PC[4]),x1=Math.max(PC[1],PC[1]+PC[3]),y1=Math.max(PC[2],PC[2]+PC[4]);
+      clip=[Math.max(clip[0],x0),Math.max(clip[1],y0),Math.min(clip[2],x1),Math.min(clip[3],y1)];
+      clipM=M.slice(); return;
+    }
+    // anything else: forward everything until this save level is restored
+    flush();
+    if(!(clip[0]<=-1e8&&clip[2]>=1e8)&&clipM){   // re-establish the shader clip on the real context
+      real.setTransform(clipM[0],clipM[1],clipM[2],clipM[3],clipM[4],clipM[5]);
+      real.beginPath(); real.rect(clip[0],clip[1],clip[2]-clip[0],clip[3]-clip[1]); real.clip();
+      real.setTransform(M[0],M[1],M[2],M[3],M[4],M[5]);
+    }
+    if(arguments.length&&typeof arguments[0]!=='string'){ real.clip.apply(real,arguments); }
+    else { replay(); real.clip.apply(real,arguments); }
+    cx=depth; stats.complexClips=(stats.complexClips||0)+1; if(depth===0)stats.complexAtRoot=(stats.complexAtRoot||0)+1;
+  };
+  shim.save=function(){
+    stack.push({fs,ga,gco,filt,sb,M:M.slice(),clip:clip.slice(),clipM:clipM?clipM.slice():null,cx});
+    depth++; real.save();
+  };
+  shim.restore=function(){
+    if(!stack.length){ real.restore(); return; }
+    const st=stack.pop(); depth--;
+    fs=st.fs; ga=st.ga; gco=st.gco; filt=st.filt; sb=st.sb; M=st.M; clip=st.clip; clipM=st.clipM;
+    if(cx>=0&&depth<cx+1&&st.cx<0){ cx=-1; }
+    else cx=st.cx;
+    real.restore();
+  };
+  const mul=(a,b)=>[a[0]*b[0]+a[2]*b[1],a[1]*b[0]+a[3]*b[1],a[0]*b[2]+a[2]*b[3],a[1]*b[2]+a[3]*b[3],a[0]*b[4]+a[2]*b[5]+a[4],a[1]*b[4]+a[3]*b[5]+a[5]];
+  shim.translate=function(x,y){ M=mul(M,[1,0,0,1,x,y]); real.translate(x,y); };
+  shim.scale=function(x,y){ M=mul(M,[x,0,0,y,0,0]); real.scale(x,y); };
+  shim.rotate=function(a){ const c=Math.cos(a),s2=Math.sin(a); M=mul(M,[c,s2,-s2,c,0,0]); real.rotate(a); };
+  shim.transform=function(a,b,c,d,e,f){ M=mul(M,[a,b,c,d,e,f]); real.transform(a,b,c,d,e,f); };
+  shim.setTransform=function(a,b,c,d,e,f){
+    if(a&&typeof a==='object'){ const m=a; M=[m.a,m.b,m.c,m.d,m.e,m.f]; real.setTransform(m); return; }
+    if(a===undefined){ M=[1,0,0,1,0,0]; real.setTransform(1,0,0,1,0,0); return; }
+    M=[a,b,c,d,e,f]; real.setTransform(a,b,c,d,e,f); };
+  shim.resetTransform=function(){ M=[1,0,0,1,0,0]; real.setTransform(1,0,0,1,0,0); };
+  shim.getTransform=function(){ return real.getTransform(); };
+  shim.createLinearGradient=function(x0,y0,x1,y1){
+    const g=real.createLinearGradient(x0,y0,x1,y1);
+    const w={__zsg:1,real:g,x0,y0,x1,y1,stops:[],addColorStop(o,c){ this.stops.push([o,c]); g.addColorStop(o,c); }};
+    return w;
+  };
+  shim.getImageData=function(){ flush(); return real.getImageData.apply(real,arguments); };
+  const DRAW=['stroke','strokeRect','fillText','strokeText','drawImage','putImageData','clearRect','drawFocusIfNeeded'];
+  for(const m of DRAW)shim[m]=function(){ return pass(m,arguments,m==='stroke'&&(!arguments.length)); };
+  // every other method and property: forward
+  try{
+    const P=CanvasRenderingContext2D.prototype;
+    for(const k of Object.getOwnPropertyNames(P)){
+      if(k==='constructor'||k in shim)continue;
+      const d=Object.getOwnPropertyDescriptor(P,k);
+      if(typeof d.value==='function'){ shim[k]=function(){ return real[k].apply(real,arguments); }; }
+      else if(d.get){
+        Object.defineProperty(shim,k,{get(){ return real[k]; },set(v){ real[k]=v; },configurable:true});
+      }
+    }
+  }catch(e){}
+  Object.defineProperty(shim,'fillStyle',{get(){ return fs; },set(v){ fs=v; real.fillStyle=(v&&v.__zsg)?v.real:v; },configurable:true});
+  Object.defineProperty(shim,'strokeStyle',{get(){ return real.strokeStyle; },set(v){ real.strokeStyle=(v&&v.__zsg)?v.real:v; },configurable:true});
+  Object.defineProperty(shim,'globalAlpha',{get(){ return ga; },set(v){ if(isFinite(v)){ ga=Math.max(0,Math.min(1,+v)); } real.globalAlpha=v; },configurable:true});
+  Object.defineProperty(shim,'globalCompositeOperation',{get(){ return gco; },set(v){ gco=v; real.globalCompositeOperation=v; },configurable:true});
+  Object.defineProperty(shim,'filter',{get(){ return filt; },set(v){ filt=v||'none'; real.filter=v; },configurable:true});
+  Object.defineProperty(shim,'shadowBlur',{get(){ return sb; },set(v){ sb=+v||0; real.shadowBlur=v; },configurable:true});
+  Object.defineProperty(shim,'canvas',{get(){ return real.canvas; },configurable:true});
+  let active=false;
+  return {
+    stats,
+    get active(){ return active; },
+    available(){
+      if(disabled||!init())return false;
+      const f=(typeof window!=='undefined')?window.ZS_GPU_BATCH:undefined;
+      if(f===false)return false;
+      if(f===true)return true;                     // forced on (QA)
+      return !gpuInfo().software;
+    },
+    gpu(){ return gpuInfo(); },
+    calibration(){ return {phase:cal.phase,prefer:cal.prefer,medOn:cal.lastOn,medOff:cal.lastOff}; },
+    /* Called by the renderer around the segment loop. */
+    shouldBatch(){
+      if(!this.available())return false;
+      const f=(typeof window!=='undefined')?window.ZS_GPU_BATCH:undefined;
+      if(f===true)return true;
+      return calWant();
+    },
+    note(on,ms){ const f=(typeof window!=='undefined')?window.ZS_GPU_BATCH:undefined; if(f===undefined)calNote(on,ms); },
+    begin(r){
+      if(!this.available())return r;
+      real=r; active=true;
+      const W=r.canvas.width,H=r.canvas.height;
+      if(cv.width!==W||cv.height!==H){ cv.width=W; cv.height=H; }
+      const t=r.getTransform(); M=[t.a,t.b,t.c,t.d,t.e,t.f];
+      fs=r.fillStyle; ga=r.globalAlpha; gco=r.globalCompositeOperation; filt=r.filter||'none'; sb=r.shadowBlur||0;
+      clip=[-1e9,-1e9,1e9,1e9]; clipM=null; cx=-1; depth=0; stack.length=0; pn=0; pComplex=false; pX.length=0; n=0;
+      stats._f0=stats.flushes;
+      return shim;
+    },
+    end(){
+      if(!active)return real;
+      try{ flush(); }catch(e){}
+      while(stack.length){ stack.pop(); try{ real.restore(); }catch(e){} }
+      active=false; stats.frames++;
+      /* Too many flushes to be worth it on this machine or track: step aside. */
+      const f=stats.flushes-(stats._f0||0);
+      if(f>60){ if(++badFrames>45){ disabled=true; stats.disabledFor='flush-bound ('+f+'/frame)'; } }
+      else badFrames=Math.max(0,badFrames-1);
+      return real;
+    },
+    reset(){ disabled=false; badFrames=0; stats.disabledFor=''; },
+    frameFlushes(){ return stats.flushes-(stats._f0||0); }
+  };
+})();
 /* ═══ GPU VEGETATION — one instanced WebGL draw per frame
    Trees, bushes, grass, palms, dead trees, reeds and cacti are no longer drawn
    one by one on the 2D canvas. Before the sprite pass, every visible vegetation
@@ -3478,10 +3908,14 @@ function buildTrack(seed){
   try{ return _buildTrackImpl(seed); }
   finally{ dm.seed=_keepSeed; }
 }
-function _buildTrackImpl(seed){
-  segments=[];
-  const rng=rngFactory(seed||1);
-  // ═══ 40 recipes: a huge palette of road shapes
+/* ═══ THE OPENING PARAMETER ROLL, SHARED (plan part 5)
+   Everything a track is before any road is laid — turn bias, hill amplitude,
+   character, wildness and the TP parameter set — comes from the first draws
+   of the seed's stream. It is factored out so the preference model can read
+   a seed's traits for microseconds' cost without building the track, and so
+   those traits can never drift from what the build actually uses: the build
+   calls this same function with the same stream. */
+function _rollTP(seed,rng){
   const sign=rng()<0.5?1:-1;                             // primary turn bias
   let hillAmp=(1.0+rng()*3.4)*1.10;                       // per-track elevation intensity
   // (adjusted by the parameter set once TP is rolled — see below)
@@ -3502,9 +3936,7 @@ function _buildTrackImpl(seed){
     ['chaos',         3.80, 3.80, 1.05, 0.30, 0.70, 2.8, 1.8]
   ][CHAR_NAMES.indexOf(charForSeed(seed))>=0
     ?CHAR_NAMES.indexOf(charForSeed(seed)):~~(rng()*12)];
-  segments._char=_CHAR[0];
-  segments._charLen=_CHAR[3];
-  const _cCurve=_CHAR[1], _cElev=_CHAR[2], _cLen=_CHAR[3],
+    const _cCurve=_CHAR[1], _cElev=_CHAR[2], _cLen=_CHAR[3],
         _cStraight=_CHAR[4], _cTech=_CHAR[5];
   // Intensity still varies on top of the character, but the floor is raised:
   // no track is simply "the default" any more.
@@ -3513,8 +3945,7 @@ function _buildTrackImpl(seed){
               : _wildRoll<0.72 ? 2.00
               : _wildRoll<0.92 ? 3.20
               :                  5.00;
-  segments._wild=_wild;
-// Independent per-axis emphasis, so two equally wild tracks differ: one may be all elevation, another all curvature.
+  // Independent per-axis emphasis, so two equally wild tracks differ: one may be all elevation, another all curvature.
   const _wC=1+(_wild-1)*(0.35+rng()*1.30);   // curvature emphasis
   const _wE=1+(_wild-1)*(0.35+rng()*1.30);   // elevation emphasis
   const _wH=1+(_wild-1)*(0.25+rng()*1.10);   // hazard/pacing emphasis
@@ -3562,6 +3993,24 @@ function _buildTrackImpl(seed){
     fogScale:       0.35+rng()*1.75,     // 0.78–1.36
     horizonBusy:    rng(),               // 0–1
   };
+  return {sign,hillAmp,_junctionCount,_CHAR,_cCurve,_cElev,_cLen,_cStraight,_cTech,
+          _wild,_wC,_wE,_wH,_wV,TP};
+}
+function _buildTrackImpl(seed){
+  segments=[];
+  const rng=rngFactory(seed||1);
+  // ═══ 40 recipes: a huge palette of road shapes
+  const _R0=_rollTP(seed,rng);
+  const sign=_R0.sign; let hillAmp=_R0.hillAmp; let _junctionCount=_R0._junctionCount;
+  const _CHAR=_R0._CHAR;
+  segments._char=_CHAR[0];
+  segments._charLen=_CHAR[3];
+  const _cCurve=_R0._cCurve, _cElev=_R0._cElev, _cLen=_R0._cLen,
+        _cStraight=_R0._cStraight, _cTech=_R0._cTech;
+  const _wild=_R0._wild;
+  segments._wild=_wild;
+  const _wC=_R0._wC, _wE=_R0._wE, _wH=_R0._wH, _wV=_R0._wV;
+  const TP=_R0.TP;
 // ── ALGORITHM TOOL OVERRIDE  If the Algorithm Tool has set a custom parameter config, apply it over the randomly-rolled TP so the user can
   if(dm._algoOverride){
     for(const kk in dm._algoOverride){
@@ -4697,6 +5146,53 @@ function _buildTrackImpl(seed){
     addRoad(6,14,12,0, -1.6*hillAmp);                    // landing
     _absurdMark(a,'slingshot');
   };
+  /* ═══ ENGINE-ENABLED TRACK TYPES (plan part 3)
+     Features the pseudo-3D engine could not draw before this update: banked
+     corners (camera-roll banking with bank-aware grip), road-surface
+     materials (grip and drag per segment) and the sky highway (no ground
+     under the road). Tuned from the Super Racing edit tile's ENGINE rows. */
+  const _bankAmt=Math.max(0,Math.min(1.2,_AO('_bankAmount',0.75)));
+  const _bankSpan=(a,b,dir,amt)=>{ const L=Math.max(1,b-a);
+    for(let k=a;k<b;k++)if(segments[k]){ const ph=(k-a)/L;
+      segments[k].bank=dir*amt*Math.min(1,Math.sin(ph*Math.PI)*1.7); } };
+  // BANKED OVAL — long constant-radius turns banked like a speedbowl, taken
+  // flat out: the horizon swings over and the car sticks.
+  const mkBankedOval=()=>{
+    const a=segments.length, turns=2+~~(rng()*2), dir=sign;
+    addRoad(10,40,10,0,0);
+    for(let t=0;t<turns;t++){
+      const s0=segments.length;
+      addRoad(22,90+~~(rng()*60),22, dir*(3.2+rng()*1.2),0);
+      _bankSpan(s0,segments.length,dir,Math.max(0.55,_bankAmt));
+      addRoad(10,46,10,0,0);
+    }
+    for(let k=a;k<segments.length;k++)if(segments[k]){ segments[k].rush=Math.max(segments[k].rush||1,1.12); segments[k].bankedOval=true; }
+  };
+  // SKY HIGHWAY — the road climbs away from the ground and runs as a glowing
+  // ribbon over open sky: glass or grating underfoot, nothing beside it.
+  const mkSkyHighway=()=>{
+    const a=segments.length;
+    addRoad(20,26,16,0, 3.2*hillAmp);
+    const v0=segments.length, links=3+~~(rng()*3), mat=rng()<0.5?'glass':'metal';
+    for(let L=0;L<links;L++)addRoad(20,60+~~(rng()*40),20,(L%2?1:-1)*sign*(1.3+rng()*1.2),(rng()-0.5)*2.4*hillAmp);
+    const v1=segments.length;
+    addRoad(16,26,20,0,-3.2*hillAmp);
+    for(let k=v0;k<v1;k++)if(segments[k]){ segments[k].voidDeck=true; segments[k].surf=mat; segments[k].rush=1.15; }
+    for(let k=a;k<segments.length;k++)if(segments[k])segments[k].skyHighway=true;
+  };
+  // ICE RINK — a frozen stretch of sweeping bends: grip drops to 42%, the
+  // racing line has to be planned rather than steered.
+  const mkIceRink=()=>{
+    const a=segments.length, n2=4+~~(rng()*3);
+    for(let i=0;i<n2;i++)addRoad(18,34,18,(i%2?1:-1)*sign*(2.2+rng()*1.2),0);
+    for(let k=a;k<segments.length;k++)if(segments[k]){ segments[k].surf='ice'; segments[k].iceRink=true; }
+  };
+  // DIRT RALLY — loose surface, rapid kinks and rolling crests.
+  const mkDirtRally=()=>{
+    const a=segments.length, n2=6+~~(rng()*4);
+    for(let i=0;i<n2;i++)addRoad(6,12,6,(i%2?1:-1)*sign*(2.6+rng()*2.0),(i%2?1:-1)*(0.8+rng()*0.8)*hillAmp);
+    for(let k=a;k<segments.length;k++)if(segments[k]){ segments[k].surf='dirt'; segments[k].dirtRally=true; }
+  };
   const _emit={flyover:mkFlyover,split:mkSplit,corkscrew:mkHelix,phase:mkPhase,
     wallride:mkWall,mesh:mkMesh,twist:mkTwist,pipe:mkPipe,multideck:mkMultiDeck,
     junction:mkJunction,halfpipe:mkHalfPipe,figure8:mkFigure8,airgap:mkAirGap,
@@ -4731,7 +5227,8 @@ function _buildTrackImpl(seed){
     rainbowroad:mkRainbowRoad, turbotornado:mkTurboTornado,
     mirrorstraight:mkMirrorStraight, zigzagstorm:mkZigzagStorm,
     cliffdrop:mkCliffDrop, rollerwave:mkRollerWave, spiralstair:mkSpiralStair,
-    blindsnap:mkBlindSnap, slingshot:mkSlingshot};
+    blindsnap:mkBlindSnap, slingshot:mkSlingshot,
+    bankedoval:mkBankedOval, skyhighway:mkSkyHighway, icerink:mkIceRink, dirtrally:mkDirtRally};
   // Tracks without rush appetite never draw the rush feature, so the palette
   // itself differs by parameter — not just by random shuffle.
   STRUCTS=Object.values(_emit);
@@ -4780,7 +5277,8 @@ function _buildTrackImpl(seed){
                'skyramp','plates','gravitywell','boostchain',
                'verticalloop','hyperlane','bottleneck',
                'sweeparc','flowchain','openrun','downhillblast','crestsweep',
-               'cliffdrop','rollerwave','spiralstair','blindsnap','slingshot'];
+               'cliffdrop','rollerwave','spiralstair','blindsnap','slingshot',
+               'bankedoval','skyhighway','icerink','dirtrally'];
   const _paletteSize=5+~~(rng()*5);             // 5-9 types this course
   const _palette=[];
   // 4-7 hero types, chosen fresh per track
@@ -4800,6 +5298,13 @@ function _buildTrackImpl(seed){
   const _swWanted=(_swForce!=null) ? (_swForce>0) : (rng()<0.02);
   if(_swWanted&&_emit.sideways&&_palette.indexOf('sideways')<0)
     _palette.push('sideways');
+  /* ENGINE-ENABLED TYPES: the edit tile's odds can force them into the palette. */
+  if(rng()<_AO('_skyHighwayOdds',0.18)&&_palette.indexOf('skyhighway')<0)_palette.push('skyhighway');
+  if(rng()<_AO('_bankOdds',0.30)*0.6&&_palette.indexOf('bankedoval')<0)_palette.push('bankedoval');
+  /* _forceFeat: a list of feature types that MUST be on this track (World
+     Tour signatures and legends use it to guarantee their identity). */
+  { const _ff=dm._algoOverride&&dm._algoOverride._forceFeat;
+    if(Array.isArray(_ff))for(const k of _ff)if(_emit[k]&&_palette.indexOf(k)<0)_palette.push(k); }
   // Fill the remainder from the full vocabulary, shuffled per track.
   // 'sideways' is excluded here — it only arrives through the gate above.
   for(const k of shuffled(_emitKeys,rng)){
@@ -4842,6 +5347,7 @@ function _buildTrackImpl(seed){
     mirrorstraight:[1,'absurd'], zigzagstorm:[2,'absurd'],
     cliffdrop:[2,'absurd'], rollerwave:[2,'absurd'], spiralstair:[1,'absurd'],
     blindsnap:[2,'absurd'], slingshot:[2,'absurd'],
+    bankedoval:[2,'speed'], skyhighway:[2,'spectacle'], icerink:[2,'technical'], dirtrally:[2,'technical'],
     megaelevation:[2,'absurd'],
     // legacy flow / technical entries retained for archetype compatibility
     plates:[2,'structure'], nightgate:[2,'structure'], canyonrun:[2,'structure'],
@@ -4877,6 +5383,8 @@ function _buildTrackImpl(seed){
       '_feat_flyover':'flyover','_feat_figure8':'figure8',
       '_feat_rainbowroad':'rainbowroad','_feat_turbotornado':'turbotornado',
       '_feat_zigzagstorm':'zigzagstorm',
+      '_feat_bankedoval':'bankedoval','_feat_skyhighway':'skyhighway',
+      '_feat_icerink':'icerink','_feat_dirtrally':'dirtrally',
     };
     for(const ok in _fcMap){
       const fk=_fcMap[ok];
@@ -5993,7 +6501,7 @@ function _buildTrackImpl(seed){
       'split','twist','airgap','junction','wallride','mesh','phase','hairpin','esschain',
       'narrows','bowl','slalom','plunge','climb','gauntlet','speedtrap','canyon',
       'chicanewall','well','rumblezone','sweep','kink','terrace','gap','helix',
-      'absurdPiece','telegraph'];
+      'absurdPiece','telegraph','bankedOval','skyHighway','iceRink','dirtRally'];
 // isFeat: only structural/feature flags count, NOT curve magnitude. Mild curves (c < 3.
     const isFeat=(sg)=>{
       if(Math.abs(sg.curve||0)>=3.125)return true;
@@ -7286,6 +7794,52 @@ function _buildTrackImpl(seed){
       }
     }
   }
+  /* ═══ BANKED CORNERS (plan part 3) — a share of the track's ordinary long
+     corners are banked, so banking is part of a track's character rather
+     than confined to one feature. Runs after corner balancing, so it banks
+     the final geometry. Deterministic (seed-hashed). */
+  {
+    const odds=Math.max(0,Math.min(1,_AO('_bankOdds',0.30))), N=segments.length;
+    const Hb=(x)=>{ let h=Math.imul(((seed>>>0)^0x2b8a17c3)+x,0x9e3779b1)>>>0; h^=h>>>15; return (h>>>0)/4294967296; };
+    if(odds>0&&_bankAmt>0){
+      let i=0, run=0;
+      while(i<N){
+        const g=segments[i], c=g?(g.curve||0):0;
+        if(Math.abs(c)>=3.0&&!g.tunnel&&!g.tube&&!g.loop&&!g.gap&&!g.bank){
+          let j=i; const sg=Math.sign(c);
+          while(j<N&&Math.sign(segments[j].curve||0)===sg&&Math.abs(segments[j].curve||0)>=1.2&&!segments[j].tunnel&&!segments[j].tube)j++;
+          if(j-i>=30&&Hb(run)<odds)_bankSpan(i,j,sg,_bankAmt*(0.7+Hb(run+999)*0.5));
+          run++; i=j+1;
+        } else i++;
+      }
+    }
+  }
+  /* ═══ BIOME SURFACES (plan part 3) — some tracks lay stretches of their
+     biome's own ground on the road: ice in the cold, sand and dirt in dry
+     country, dirt and grass in the green biomes, lava crust near volcanoes,
+     metal grating in cities. Grip and drag follow (engine plan E9). */
+  {
+    const Hs=(x)=>{ let h=Math.imul(((seed>>>0)^0x71c0ffee)+x,0x85ebca6b)>>>0; h^=h>>>13; return (h>>>0)/4294967296; };
+    const odds=Math.max(0,Math.min(1,_AO('_surfaceOdds',0.45))), share=Math.max(0,Math.min(0.6,_AO('_surfaceShare',0.16)));
+    const bio=(theme&&theme.biome)||'plains';
+    const BSURF={arctic:['ice'],glacier:['ice'],tundra:['ice','dirt'],alpine:['ice','dirt'],
+      desert:['sand','dirt'],mesa:['dirt','sand'],canyon:['dirt','sand'],savanna:['dirt','sand'],
+      forest:['dirt','grass'],jungle:['dirt','grass'],swamp:['dirt','grass'],wetland:['grass','dirt'],plains:['grass','dirt'],
+      volcano:['lava','dirt'],city:['metal'],neon:['metal','glass'],lunar:['metal','dirt'],haunted:['dirt'],
+      ocean:['sand'],islands:['sand','grass']}[bio]||['dirt'];
+    const _fsf=dm._algoOverride&&dm._algoOverride._forceSurface;
+    if(typeof _fsf==='string'&&SURFACES[_fsf]){ BSURF.length=0; BSURF.push(_fsf); }
+    const N=segments.length;
+    if(share>0&&Hs(1)<odds&&N>600){
+      const runs=2+~~(Hs(2)*3), each=Math.max(40,Math.round(N*share/runs));
+      for(let r=0;r<runs;r++){
+        const at=Math.floor(N*(0.08+0.84*(r+Hs(10+r)*0.8)/runs)), mat=BSURF[~~(Hs(20+r)*BSURF.length)];
+        for(let k=at;k<Math.min(N-10,at+each);k++){ const g=segments[k];
+          if(!g||g.surf||g.tunnel||g.tube||g.loop||g.gap||g.pit||g._sp!=null||g.boost)continue;
+          g.surf=mat; }
+      }
+    }
+  }
   // ═══ (2) FEATURE MANIFEST — DERIVED FROM THE FINISHED TRACK
   // Counting the finished segment array instead means the manifest cannot
   {
@@ -7307,6 +7861,9 @@ function _buildTrackImpl(seed){
     tally('ramp',      g=>g.ramp);
     tally('gap',       g=>g.gap);
     tally('boost',     g=>g.boost);
+    tally('banked',    g=>g.bank&&Math.abs(g.bank)>0.2);
+    tally('skyhighway',g=>g.voidDeck);
+    for(const _sm of Object.keys(SURFACES))tally('surf_'+_sm,g=>g.surf===_sm);
     if(segments._extremeElev)F.extremeElev=1;
     if(segments._absurd)F['absurd_'+String(segments._absurd).toLowerCase()]=1;
     // Track-wide EFFECTS, so a tile can advertise how a course will look and
@@ -8182,8 +8739,12 @@ function pollInput(){
   if(keys.KeyV){
     if(!_camKeyDebounce){
       _camKeyDebounce=true;
-      _camMode=(_camMode===5)?0:5;
-      showMsg(_camMode===5?'FIRST PERSON':'CHASE CAM');
+      /* ═══ DRIVING VIEWPOINTS (engine plan E11): chase, first person, then
+         three cinematic cameras driven by the orbit axes. */
+      const _CYC=[0,5,6,7,8];
+      _camMode=_CYC[(_CYC.indexOf(_camMode)+1)%_CYC.length];
+      if(_camMode<6){ dm._orbitPitch=0; dm._orbitRoll=0; dm._orbitZ=0; dm._orbitX=0; dm._vpPose=null; }
+      showMsg({0:'CHASE CAM',5:'FIRST PERSON',6:'HELI CAM',7:'DRONE CAM',8:'CINEMA CAM'}[_camMode]||'CHASE CAM');
     }
   } else _camKeyDebounce=false;
   /* Keyboard equivalent of the stick, so the range is reachable without a pad. */
@@ -8351,7 +8912,10 @@ function _verifyRoadBounds(){
       // Asymmetric rail: widen only the PIT SIDE so the player can reach the strip
       var _pRail=1.03*(1-_pNarrow);
       var _pRailL=-_pRail, _pRailR=_pRail;
-      if(s.pit){
+      /* Was `s.pit` — `s` does not exist in this function, so the player half
+         of this guard threw on every physics step and the catch below
+         silently skipped it. */
+      if(_ps.pit){
         if(dm._pitSide!==-1) _pRailR=Math.max(_pRailR,1.55);
         else                 _pRailL=Math.min(_pRailL,-1.55);
       }
@@ -9101,6 +9665,11 @@ var _leanHelp=0;
      at top speed (corners still demand braking flat out) but 33% weaker at
      60% and 53% weaker at 40%. Above top speed (boosts) and in the air the
      old formula is kept, so nothing changes there. */
+  /* Banked turns and surface materials (engine plan E8/E9). A bank that
+     leans INTO the bend supports the car: less outward push, less load. */
+  const _bkRaw=s.bank||0;
+  const _bankK=(_bkRaw&&Math.sign(_bkRaw)===Math.sign(s.curve||0))?Math.min(1,Math.abs(_bkRaw)):0;
+  const _surf=(s.surf&&SURFACES[s.surf])||null;
   let _latDrift;
   if(!_air&&spct<=1){
     _latDrift=-(1.166*(1+CityLink.gripBonus())*_leanGrip*Math.pow(Math.max(0,spct),3.2)*s.curve);
@@ -9127,14 +9696,16 @@ var _leanHelp=0;
          • the centrifugal drift is applied directly, never grip-limited;
          • load beyond grip adds a further outward slide on top.
        No steering in a corner = the car runs wide into the outside wall. */
+    if(_bankK)_latDrift*=(1-0.70*_bankK);
     const _vx=P.vx||0;
     const _acc=((P._latCmd||0)-_vx)/LAT_TAU;        // steering command only
-    const _load=Math.abs(s.curve||0)*_spd2*CORNER_LOAD;   // holding the bend
+    const _load=Math.abs(s.curve||0)*_spd2*CORNER_LOAD*(1-0.55*_bankK);   // holding the bend
     /* Airborne there is nothing to push against, so grip is nearly gone and
        the machine simply carries its momentum — which is what makes a bad
        launch actually punishing. */
     const _grip=GRIP_BASE*(1-GRIP_SPD_LOSS*Math.min(1,spct))*(_air?0.22:1)
-                *(1+CityLink.gripBonus());
+                *(1+CityLink.gripBonus())*((_surf&&!_air)?_surf.grip:1);
+    if(_surf&&_surf.drag&&!_air)P.speed*=Math.max(0,1-_surf.drag*dt*Math.max(0.2,spct));
     const _over=Math.max(0,_load-_grip);
     const _slip=_grip>0?Math.min(1.6,_over/_grip):0;
     const _avail=_grip*Math.max(0.45,1-0.5*_load/Math.max(1e-6,_grip));
@@ -10185,6 +10756,13 @@ function project(p,camX,camY,camZ,vw,vh){
   } else {
     p.screen.y=Math.round(_perspY);
     p.screen.w=Math.round(p.screen.scale*ROAD_WIDTH*vw/2);
+  }
+  /* ═══ NON-FINITE GUARD (engine plan E13): a NaN/Infinity anywhere upstream
+     (a corrupt world coordinate, a runaway camera value) must not reach the
+     rasteriser. The point is marked behind the camera, which every caller
+     already treats as "do not draw". */
+  if(!(p.screen.x===p.screen.x&&p.screen.y===p.screen.y&&p.screen.w===p.screen.w)||!isFinite(p.screen.scale)){
+    p.camera.z=-1; p.screen.x=0; p.screen.y=0; p.screen.w=0; p.screen.scale=0;
   }
 }
 // Roll-aware road edge points. Rotates the road's cross-section about its own centreline by `roll` radians.
@@ -11469,6 +12047,18 @@ function _interpBodies(t){
   }
 }
 
+/* Pose for a driving viewpoint (see DRIVING VIEWPOINTS). */
+const _CINEMA_SHOTS=[3,4,9,10,16,51,1,2,5,131];
+function _viewPose(mode){
+  const t=animNow()/1000;
+  if(mode===6)return [0,1.30,1.05,0.28,0,-2,0];                                  // HELI
+  if(mode===7){ const a=Math.sin(t*0.23);                                          // DRONE
+    return [0.55*a,1.25,0.46+0.10*Math.sin(t*0.37),0.12,0,0,0.45*a]; }
+  if(mode===8){ const k=Math.floor(t/6), idx=_CINEMA_SHOTS[k%_CINEMA_SHOTS.length];   // CINEMA
+    if(dm._vpShot!==idx){ dm._vpShot=idx; _camCutReset(); if(dm._vpPose)dm._vpPose=null; }
+    return _shotPose(idx,(t%6)/6); }
+  return [0,1,0,0,0,0,0];
+}
 /* Reset every smoothed camera-dependent measurement so the next frame seeds
    from its own projection instead of easing over from the previous view.
    Called on a shot change and on any in-shot discontinuity. */
@@ -11487,7 +12077,25 @@ function _camCutReset(){
   dm._boreEase=null;
   dm._boreFade=null;
 }
+/* ═══ FRAME PROFILER (engine plan E14): exponential averages of the world
+   render and of its segment loop, readable at any time through
+   DriveMode.engine().perf — what the adaptive quality and the GPU calibration
+   decide on, made visible. */
+const _perf={world:0,loop:0,frames:0};
 function renderWorld(vw,vh,camPan){
+  const t0=performance.now();
+  try{ return _renderWorldImpl(vw,vh,camPan); }
+  finally{ const d=performance.now()-t0; _perf.world=_perf.frames?_perf.world*0.92+d*0.08:d; _perf.frames++; }
+}
+/* ═══ ENGINE CAPABILITIES (engine plan E19): what this build of the
+   pseudo-3D engine can draw, for the generator and for tooling. */
+const ENGINE_CAPS={
+  gpuBatch:true, banking:true, surfaces:Object.keys(SURFACES), skyHighway:true,
+  viewpoints:['chase','first-person','heli','drone','cinema'],
+  cameraAxes:['yaw','zoom','lift','pitch','roll','ztrav','xoff'],
+  cinematicSafety:['envelope','tunnel-guard','occluder-fade','cut-reset']
+};
+function _renderWorldImpl(vw,vh,camPan){
     /* (2) ORIENTATION GUARANTEE FOR ATTRACT MODE. Enforced at the TOP of the render, before anything reads _camMode. */
   /* Attract mode drives the orbit itself, so first person (the only remaining
      discrete mode) must not be active while it does. */
@@ -12658,12 +13266,22 @@ function renderWorld(vw,vh,camPan){
       dm._orbitZ=dm._bumpCamOrbit.z||0;
       dm._camZoom=dm._bumpCamOrbit.zoom;
     }
+    else if(_camMode>=6&&!(dm.demo&&race&&race.attract)){
+      /* DRIVING VIEWPOINTS — pose from the view, through the same envelope
+         and tunnel guard as the demo, eased so switching views glides. */
+      const _vp=_encloseCamera(_camEnvelope(_viewPose(_camMode)));
+      const V=dm._vpPose||(dm._vpPose=[dm._orbitAz||0,dm._orbitZoom||1,dm._orbitLift||0,0,0,0,0]);
+      for(let k=0;k<7;k++)V[k]+=(_vp[k]-V[k])*0.08;
+      dm._orbitAz=V[0]; dm._orbitZoom=V[1]; dm._orbitLift=V[2]; dm._orbitPitch=V[3];
+      dm._orbitRoll=0; dm._orbitZ=V[5]; dm._orbitX=V[6]; dm._camZoom=V[1];
+    }
     else if(!(dm.demo&&race&&race.attract)){
       dm._orbitAz=P._camSide*1.54;
       dm._orbitX=P._camSide*0.62;
     }
-    if(!dm._bumpCamOrbit&&!(dm.demo&&race&&race.attract))dm._orbitLift=Math.abs(P._camSide)*0.85;
-    if(!dm._bumpCamOrbit&&!(dm.demo&&race&&race.attract))dm._orbitZoom=Math.min(2.70,1+Math.abs(P._camSide)*1.70);
+    const _vpOn=(_camMode>=6&&!(dm.demo&&race&&race.attract));
+    if(!_vpOn&&!dm._bumpCamOrbit&&!(dm.demo&&race&&race.attract))dm._orbitLift=Math.abs(P._camSide)*0.85;
+    if(!_vpOn&&!dm._bumpCamOrbit&&!(dm.demo&&race&&race.attract))dm._orbitZoom=Math.min(2.70,1+Math.abs(P._camSide)*1.70);
   }
   // Applied to camX below so it shifts the whole view, not just the car.
     /* _svCam was computed here and never read — the "small lateral offset in addition to the yaw" the comment describes was never actually applied, so pushing the stick sideways only ROTATED the eye about the car. */
@@ -12690,7 +13308,7 @@ function renderWorld(vw,vh,camPan){
      box comes from last frame's machine draw, which is one frame stale and
      therefore smooth enough for a fade. */
   {
-    const _cine=!!((race&&(race.attract||race.intro))||dm._dbgView);
+    const _cine=!!((race&&(race.attract||race.intro))||dm._dbgView||_camMode>=6);
     const _cd=(4.5-(dm._orbitZ||0))*SEG_LEN;
     const O=dm._occl||(dm._occl={});
     O.on=_cine&&_cd>SEG_LEN&&dm._carDrawX!=null&&isFinite(dm._carDrawX)&&dm._carDrawY!=null;
@@ -13016,8 +13634,14 @@ function renderWorld(vw,vh,camPan){
     const _hzG=(dm._horizonY!=null&&isFinite(dm._horizonY))?dm._horizonY:vh*0.5;
     if(_hzG<vh){ ctx.fillStyle=isNight()?PAL.floorA:PAL.floorB; ctx.fillRect(0,Math.max(0,_hzG),vw,vh-Math.max(0,_hzG)); }
   }
+  dm._voidSky=null;   // SKY HIGHWAY band colours, resolved once per frame on first use
   const _fireQ=[];   // deferred road-fire / water-jet emitters (see DEFERRED)
   const _bc=dm._boreClip; let _bcClipped=false;
+  /* GPU BATCH: the segment loop draws through the batching shim (see GPU
+     BATCH RASTERISER); the real context is restored right after the loop. */
+  const _ctxReal=ctx, _useBatch=GLBatch.shouldBatch(), _loopT0=performance.now();
+  if(_useBatch)ctx=GLBatch.begin(ctx);
+  try{
   for(let n=-_backN;n<DDE;n++){
     if(_bc&&n>_bc.farN){
       if(!_bc.open)break;                          // exit not in view: nothing outside is visible
@@ -13130,7 +13754,20 @@ function renderWorld(vw,vh,camPan){
     }
     const fog=Math.min(0.72,Math.pow(n/DRAW_DIST,1.6));
     const dark=s.color;
-    if(s.water){
+    if(s.voidDeck&&!s.tube&&!s.tunnel){
+      /* ═══ SKY HIGHWAY (engine plan E10) — no ground under this stretch:
+         the band is sky seen far below, darkening toward the bottom of the
+         screen, with a thin cloud layer every few segments. The deck, its
+         rails and its edge glow are drawn as usual on top. */
+      const _nt=isNight(), _hB=Math.max(1,p1.y-p2.y), _dd=Math.max(0,Math.min(1,p1.y/vh));
+      const _sc=dm._voidSky||(dm._voidSky=skyColors());
+      /* Looking DOWN into open air: the sky deepens with depth below the
+         deck, and the nearest bands fall toward dark, so the road floats. */
+      ctx.fillStyle=_dd<0.5?_sc.mid:(_dd<0.7?_sc.top:(_nt?'#04040c':hsl((theme.skyHue+210)%360,55,14)));
+      ctx.fillRect(0,p2.y,vw,_hB);
+      if((s.index%11)===0){ ctx.fillStyle=_nt?'rgba(150,170,255,0.10)':'rgba(255,255,255,0.20)';
+        ctx.fillRect(0,p2.y+_hB*0.3,vw,Math.max(1,_hB*0.3)); }
+    } else if(s.water){
       /* Flipped only while ORBITING. On an ordinary crest an inverted band
          collapsing to a 1px sliver is correct; taking abs() there paints
          ground across every crest in every view. */
@@ -13820,7 +14457,7 @@ function renderWorld(vw,vh,camPan){
         _fDens=Math.sin(s.index*0.013+(dm._firePhase||0))*0.5+0.5;
     }
     const _fLit=(_fCov>=1)||(_fDens<_fCov);
-    if(dm._roadFire&&_fLit&&p1.w>2&&!s.tunnel&&!s.tube&&!s.loop){   // outdoor effect: never inside a tunnel
+    if(dm._roadFire&&_fLit&&p1.w>2&&!s.tunnel&&!s.tube&&!s.loop&&!s.voidDeck){   // outdoor effect: never inside a tunnel
     /* ═══ DEFERRED: FLAMES / WATER JETS PROTRUDE ABOVE THEIR SEGMENT
        Drawn inline, each emitter was immediately overpainted by the NEXT
        (farther) segment's full-width ground row, so every flame looked cut off
@@ -14061,7 +14698,7 @@ function renderWorld(vw,vh,camPan){
     } else {
       // Roll-aware deck: one clean quad following the rolled edges.
       poly(_l1x,_l1y,_r1x,_r1y,_r2x,_r2y,_l2x,_l2y,
-        s.boost?(dark?'#c96a00':'#ff9a1f'):(_spSurface(s,dark)||(dark?theme.roadA:theme.roadB)));   // set-piece surfaces (rainbow, lava, disco, neon)
+        s.boost?(dark?'#c96a00':'#ff9a1f'):(_spSurface(s,dark)||_surfColor(s,dark)||(dark?theme.roadA:theme.roadB)));   // set-piece surfaces (rainbow, lava, disco, neon)
       if(s.hyperlane){
         const hn=animNow();
         const hpulse=0.55+0.35*Math.sin(hn/400+(s.index||0)*0.15);
@@ -14071,6 +14708,22 @@ function renderWorld(vw,vh,camPan){
         const hw1=p1.w*0.18, hw2=p2.w*0.18;
         const hcx1=p1.x, hcx2=p2.x;
         poly(hcx1-hw1,hcy,hcx1+hw1,hcy,hcx2+hw2,hcy2,hcx2-hw2,hcy2,ctx.fillStyle);
+      }
+      if(s.voidDeck&&p1.w>1){
+        // underglow along both deck edges: the road reads as a floating ribbon
+        const gw1=p1.w*0.05, gw2=p2.w*0.05, gc=isNight()?'rgba(90,230,255,0.85)':'rgba(40,190,255,0.75)';
+        poly(_l1x-gw1,_l1y,_l1x,_l1y,_l2x,_l2y,_l2x-gw2,_l2y,gc);
+        poly(_r1x,_r1y,_r1x+gw1,_r1y,_r2x+gw2,_r2y,_r2x,_r2y,gc);
+      }
+      if(s.bank&&Math.abs(s.bank)>0.2&&p1.w>1){
+        /* ═══ BANKED APRON (engine plan E8) — the raised outside of a banked
+           turn, rising off the outer edge. The camera roll does the rest. */
+        const b=Math.abs(s.bank), right=s.bank>0;
+        const ex1=right?_l1x:_r1x, ey1=right?_l1y:_r1y, ex2=right?_l2x:_r2x, ey2=right?_l2y:_r2y, dir=right?-1:1;
+        const ox1=ex1+dir*p1.w*0.62, oy1=ey1-p1.w*0.34*b, ox2=ex2+dir*p2.w*0.62, oy2=ey2-p2.w*0.34*b;
+        poly(ex1,ey1,ox1,oy1,ox2,oy2,ex2,ey2,dark?'#3a3d4a':'#4a4e5e');
+        const sx1=ex1+dir*p1.w*0.56, sy1=ey1-p1.w*0.31*b, sx2=ex2+dir*p2.w*0.56, sy2=ey2-p2.w*0.31*b;
+        poly(sx1,sy1,ox1,oy1,ox2,oy2,sx2,sy2,((s.index>>2)&1)?'#e8e8f0':'#d02828');
       }
     }
     // ── FORK ISLAND: the central divider of a split road (see SPLIT-AND-REJOIN)
@@ -14323,6 +14976,7 @@ function renderWorld(vw,vh,camPan){
     if(!_deckHidden)maxY=p2.y;
   }
   if(_bcClipped)ctx.restore();   // end of the tunnel-exit clip
+  } finally { if(ctx!==_ctxReal)GLBatch.end(); ctx=_ctxReal; const _ld=performance.now()-_loopT0; GLBatch.note(_useBatch,_ld); _perf.loop=_perf.loop?_perf.loop*0.92+_ld*0.08:_ld; }
   for(let fq=_fireQ.length-1;fq>=0;fq--){ try{ _fireQ[fq](); }catch(e){ try{ctx.restore();}catch(_){} } }   // far to near
   ctx.strokeStyle=(theme.sideStyle==='grid'||theme.sideStyle==='moire')
     ?PAL.gridNeon:PAL.tileLine;
@@ -18309,66 +18963,20 @@ function likeGetProfile(){
   if(!_likeProfile)_likeProfile=_buildProfile((typeof bcLoad==='function')?bcLoad():[]);
   return _likeProfile;
 }
-function _wt(P,kind,value,cap,floor){
-  if(!P.n||!value)return 0;
-  const hits=(P[kind]&&P[kind][value])||0;
-  if(hits<2)return 0;                       // need a pattern, not a one-off
-  return Math.min(cap,hits/Math.max(floor,P.n));
-}
-function trashWeight(kind,v){return _wt(trashGetProfile(),kind,v,0.85,4);}
-function likeWeight(kind,v){return _wt(likeGetProfile(),kind,v,0.80,3);}
-// Combined chooser: liked traits recur, disliked fade — never hard-banned.
+/* ═══ GENERATION NO LONGER BENDS TO FEEDBACK (plan part 5)
+   This used to re-weight the archetype / profile / scene-mode draw by the
+   trash and Best Courses history, and _AO() pulled every continuous
+   parameter toward liked averages. Two problems:
+     • It barely learned: a categorical trait counted only after the SAME
+       value (1 of 128 archetypes, 1 of ~100 profiles) had been trashed twice.
+     • It broke determinism: the same seed built a DIFFERENT track as the
+       history grew, so a saved Best Course, a Grand Prix round or a World
+       Tour town could silently change under the player.
+   A seed now always builds the same track. Preferences act one level up —
+   choosing WHICH seeds to offer (see SEED PREFERENCE MODEL). */
 function trashPick(kind,list,rnd){
   if(!list||!list.length)return null;
-  const T=trashGetProfile(),L=likeGetProfile();
-  if(!T.n&&!L.n)return list[~~(rnd()*list.length)];
-  let best=null,bestScore=-Infinity;
-  for(let i=0;i<7;i++){
-    const c=list[~~(rnd()*list.length)];
-    const sc=likeWeight(kind,c)*1.15-trashWeight(kind,c)+rnd()*0.35;
-    if(sc>bestScore){bestScore=sc;best=c;}
-  }
-  return best||list[~~(rnd()*list.length)];
-}
-// ═══ (9) THE CONTINUOUS FEEDBACK WAS NEVER CONNECTED
-// `trashNudge` and `likeNudge` were written, tested-looking, and NEVER CALLED
-function applyFeedback(key,value,lo,hi){
-  const L=likeGetProfile(), T=trashGetProfile();
-  let v=value;
-  if(L.paramN>=3&&L.paramAvg&&L.paramAvg[key]!=null){
-    const span=(hi-lo)||1;
-    const conf=Math.min(1,L.paramN/10);
-    v=v+(L.paramAvg[key]-v)*0.30*conf;
-  }
-  // Then push away from disliked values, but only if the like profile has no
-  // opinion here — otherwise the two fight and the result is noise.
-  else if(T.paramN>=5&&T.paramAvg&&T.paramAvg[key]!=null){
-    const span=(hi-lo)||1;
-    const avg=T.paramAvg[key];
-    const close=1-Math.min(1,Math.abs(v-avg)/(span*0.5));
-    if(close>0){
-      const dir=(v>=avg)?1:-1;
-      v=v+dir*span*0.22*close*Math.min(1,T.paramN/12);
-    }
-  }
-  return Math.max(lo,Math.min(hi,v));
-}
-// Continuous parameters: push away from disliked averages, pull toward liked.
-function trashNudge(key,value,lo,hi){
-  const P=trashGetProfile();
-  if(P.paramN<5)return value;
-  const avg=P.paramAvg[key]; if(avg==null)return value;
-  const span=(hi-lo)||1;
-  const close=1-Math.min(1,Math.abs(value-avg)/(span*0.5));
-  if(close<=0)return value;
-  const dir=(value>=avg)?1:-1;
-  return clamp(value+dir*span*0.22*close*Math.min(1,P.paramN/12),lo,hi);
-}
-function likeNudge(key,value,lo,hi){
-  const P=likeGetProfile();
-  if(P.paramN<3)return value;
-  const avg=P.paramAvg[key]; if(avg==null)return value;
-  return clamp(value+(avg-value)*Math.min(0.30,0.10+P.paramN*0.02),lo,hi);
+  return list[~~(rnd()*list.length)];
 }
 function trashCurrent(){
   const l=trashLoad();
@@ -18397,7 +19005,107 @@ function trashCurrent(){
   showToast(_wasBest
     ? ('\u2716 REMOVED FROM BEST \u00b7 LEARNED FROM '+n)
     : ('\u2716 TRASHED \u00b7 LEARNED FROM '+n+' COURSE'+(n===1?'':'S')),true);
+  _prefToast();
   return true;
+}
+/* ═══ SEED PREFERENCE MODEL (plan part 5)
+   The player gives two signals: COMMIT TO BEST COURSES (good) and SEND TO
+   TRASH (bad). Instead of bending the generator, a small model learns which
+   KINDS of seed the player enjoys and the game uses it to choose which seeds
+   to offer — Super Racing's random tile, its roster, the attract demo.
+   • Traits are cheap and exact: the seed's character, biome, palette family,
+     weather and the opening parameter roll (_rollTP) — microseconds per seed,
+     no track build. Every stored entry is re-read from its seed, so the whole
+     trash / best history trains the model retroactively.
+   • Model: class-balanced L2 logistic regression (~60 weights), retrained only
+     when either list changes. With few examples it stays near 50% and the
+     screen does nothing; confidence grows with the history.
+   • Offer policy: draw N candidates, keep the best-scored one, but explore a
+     random candidate 20% of the time so the model keeps meeting new things. */
+const _PM_FAM=['WARM','GREEN','COOL','VIOLET','NEUTRAL'];
+const _PM_NUM=[['curveBias',4,'TIGHT CORNERS'],['elevBias',8,'BIG HILLS'],['straightBias',6,'LONG STRAIGHTS'],
+  ['technicality',3,'TECHNICAL SECTIONS'],['rushAppetite',3,'RUSH ZONES'],['propDensity',6,'DENSE SCENERY'],
+  ['hazardDensity',3,'HAZARDS'],['boostDensity',4,'BOOST PADS']];
+const _PM_NAMES=[].concat(CHAR_NAMES.map(c=>c.toUpperCase()),BIOME_LIST.map(b=>b.toUpperCase()),
+  _PM_FAM.map(f=>f+' PALETTE'),['DARK PALETTE','BRIGHT PALETTE','RAIN','SNOW','STORMS','FOG','AURORA'],
+  _PM_NUM.map(n=>n[2]),['(bias)']);
+function _seedTraits(seed,params){
+  seed=seed>>>0;
+  const keepLock=dm._dayLock, keepO=dm._algoOverride; let th=null;
+  try{ dm._algoOverride=null; th=makeTheme(seed); }catch(e){}
+  dm._dayLock=keepLock; dm._algoOverride=keepO;  // makeTheme writes/reads these; a probe must not
+  let TP=params;
+  if(!TP){ try{ TP=_rollTP(seed,rngFactory(seed||1)).TP; }catch(e){ TP={}; } }
+  const f=[], ch=charForSeed(seed), bi=th?th.biome:null;
+  for(const c of CHAR_NAMES)f.push(c===ch?1:0);
+  for(const b of BIOME_LIST)f.push(b===bi?1:0);
+  let hue=0,sat=0,lum=0.3;
+  if(th&&th.trackTheme){ const h=_hexHSL(th.trackTheme.floorA); hue=h[0]; sat=h[1]; lum=h[2]; }
+  const fam=sat<0.15?4:(hue<50||hue>=330)?0:hue<170?1:hue<260?2:3;
+  for(let i=0;i<5;i++)f.push(fam===i?1:0);
+  f.push(lum<0.2?1:0, lum>0.5?1:0);
+  const w=th||{};
+  f.push((w.rain||0)>0.3?1:0, w.snow?1:0, (w.storm||0)>0.5?1:0, w.heavyFog?1:0, w.aurora?1:0);
+  for(const n of _PM_NUM)f.push(Math.max(0,Math.min(1.5,(+TP[n[0]]||0)/n[1])));
+  f.push(1);
+  return f;
+}
+let _pm=null,_pmKey='';
+function _pmModel(){
+  let good=[],bad=[];
+  try{ good=bcLoad()||[]; }catch(e){} try{ bad=trashLoad()||[]; }catch(e){}
+  const key=good.length+':'+bad.length+':'+(good.length?good[good.length-1].seed:0)+':'+(bad.length?bad[bad.length-1].seed:0);
+  if(_pm&&_pmKey===key)return _pm;
+  const X=[],Y=[];
+  for(const e of good)if(e&&e.seed!=null){ X.push(_seedTraits(e.seed,e.params&&e.params.curveBias!=null?e.params:null)); Y.push(1); }
+  for(const e of bad)if(e&&e.seed!=null){ X.push(_seedTraits(e.seed,e.params&&e.params.curveBias!=null?e.params:null)); Y.push(0); }
+  const D=_PM_NAMES.length, w=new Float64Array(D);
+  const nG=Y.filter(y=>y).length, nB=Y.length-nG;
+  if(nG&&nB){
+    const wG=0.5*Y.length/nG, wB=0.5*Y.length/nB;
+    for(let it=0;it<260;it++){
+      const g=new Float64Array(D);
+      for(let i=0;i<X.length;i++){
+        let z=0; const x=X[i]; for(let d=0;d<D;d++)z+=w[d]*x[d];
+        const e=(1/(1+Math.exp(-z))-Y[i])*(Y[i]?wG:wB);
+        for(let d=0;d<D;d++)g[d]+=e*x[d];
+      }
+      for(let d=0;d<D;d++)w[d]-=0.6*(g[d]/X.length+(d===D-1?0:0.06*w[d]));
+    }
+  }
+  _pm={w,nGood:nG,nBad:nB,conf:(nG&&nB)?Math.min(1,(nG+nB)/14):0};
+  _pmKey=key; return _pm;
+}
+/* Probability (0..1) that the player will like this seed; 0.5 = no opinion. */
+function seedFit(seed,params){
+  const M=_pmModel(); if(!M.conf)return 0.5;
+  const x=_seedTraits(seed,params); let z=0;
+  for(let d=0;d<x.length;d++)z+=M.w[d]*x[d];
+  return 0.5+(1/(1+Math.exp(-z))-0.5)*M.conf;
+}
+/* Choose one of several candidate seeds. */
+function pickPreferredSeed(cands,paramsFor){
+  if(!cands||!cands.length)return 1;
+  const M=_pmModel();
+  if(!M.conf||Math.random()<0.20)return cands[0]>>>0;
+  let best=cands[0],bs=-1;
+  for(const c of cands){ const f=seedFit(c,paramsFor?paramsFor(c):null); if(f>bs){bs=f;best=c;} }
+  return best>>>0;
+}
+/* Plain-language summary of what the model has learned. */
+function prefSummary(){
+  const M=_pmModel(); if(!M.conf)return null;
+  const idx=[]; for(let d=0;d<M.w.length-1;d++)idx.push(d);
+  idx.sort((a,b)=>M.w[b]-M.w[a]);
+  const likes=idx.slice(0,3).filter(d=>M.w[d]>0.15).map(d=>_PM_NAMES[d]);
+  const dis=idx.slice(-3).reverse().filter(d=>M.w[d]<-0.15).map(d=>_PM_NAMES[d]);
+  return {likes,dislikes:dis,good:M.nGood,bad:M.nBad,confidence:+M.conf.toFixed(2)};
+}
+function _prefToast(){
+  try{ const S=prefSummary(); if(!S)return;
+    const t=(S.likes.length?'❤ '+S.likes.join(' · '):'')+(S.dislikes.length?'   ✖ '+S.dislikes.join(' · '):'');
+    if(t)setTimeout(()=>{ try{ showToast('LEARNED: '+t,true); }catch(e){} },1900);
+  }catch(e){}
 }
 const BC_KEY='zs_best_courses_v1';
 const BC_MAX=60;
@@ -18470,6 +19178,7 @@ function bcCommitCurrent(){
   });
   bcStore(list);
   showToast('\u2605 COMMITTED TO BEST COURSES',true);
+  _prefToast();
   return true;
 }
 function pauseOpts(){
@@ -19478,6 +20187,17 @@ function frame(ms){
       // Up to 78° of roll at full envelope — enough to read as "on the side"
       _roll=dm._swRoll*1.36;
     }
+    /* ═══ BANKED TURNS (engine plan E8). A pseudo-3D road cannot roll its
+       own cross-section without tearing, but the camera is bolted to a car
+       that IS on the banked surface: from inside, the road stays level and
+       the horizon tilts. So a banked segment rolls the camera, eased, by up
+       to ~21°. Physics (updatePlayer) gives the bank its grip. */
+    if(P&&!race.paused){
+      const _bs=seg(P.z), _bt=(_bs&&_bs.bank)?-_bs.bank*0.36:0;
+      dm._bankRoll=(dm._bankRoll||0)+(_bt-(dm._bankRoll||0))*0.06;
+      if(Math.abs(dm._bankRoll)<0.0005)dm._bankRoll=0;
+      _roll+=dm._bankRoll;
+    }
     /* Rail impact jitter rides the same transform as the speed shake, so the
        two compose instead of fighting for the canvas state. */
     const _rj=(P&&P._railJitter)?P._railJitter:0;
@@ -19793,7 +20513,7 @@ function frame(ms){
   var _tName=(theme.trackTheme&&theme.trackTheme.name)||'';
   var _isDesert=(theme.biome==='desert')
     ||_tName==='BONE DESERT'||_tName==='CHROME DESERT'||_tName==='DESERT NOON';
-  var _isArid=_isDesert||theme.biome==='mesa'||theme.biome==='canyon'
+  var _isArid=_isDesert||theme.sandForce||theme.biome==='mesa'||theme.biome==='canyon'
              ||theme.biome==='savanna'||theme.biome==='plains';
   var _wantSand=(_isArid&&!_enclosed&&!theme.snow&&!theme.rain);
   if(_wantSand&&!race.paused&&_gpuSandTry()){
@@ -20050,9 +20770,21 @@ function start(seed,opts){
      screen can show the correct button labels and suppress GP-only text. */
   dm.fromWorldTour=!!(opts&&opts.worldTour);
   if(opts&&opts.algo){ try{ dm._algoOverride=opts.algo; }catch(e){} }
+  /* A World Tour town is a fixed place: it must not inherit the generator
+     overrides a previous Super Racing or Algorithm Tool race left behind. */
+  else if(opts&&opts.worldTour){ dm._algoOverride=null; }
   dm.seed=(seed>>>0)||((Math.random()*1e9)|0)||1;
   {const _b2=BIOME_DEFS[(makeTheme(dm.seed).biome)]; dm.trackName=trackNameForSeed(dm.seed,_b2?_b2.tag:null);}
   dm.todOverride=(opts&&opts.tod!=null)?opts.tod:null;
+  /* WORLD TOUR SIGNATURE (plan part 2): a municipality's racing tradition
+     arrives as generator overrides plus a time of day. Applied here, before
+     the theme and the track are built, so the whole race carries it. */
+  dm._tourSig=(opts&&opts.tour)?opts.tour:null;
+  if(dm._tourSig){
+    if(dm._tourSig.algo)dm._algoOverride=Object.assign({},dm._algoOverride||{},dm._tourSig.algo);
+    if(dm._tourSig.tod!=null&&dm.todOverride==null)dm.todOverride=dm._tourSig.tod;
+    {const _b3=BIOME_DEFS[(makeTheme(dm.seed).biome)]; dm.trackName=(dm._tourSig.legend?'LEGEND \u00b7 ':'')+trackNameForSeed(dm.seed,_b3?_b3.tag:null);}
+  }
   // Re-apply the EXACT archetype/style/profile this track was generated with,
   // so the race matches its minimap and its advertised feature list.
   dm._forceVariety=(opts&&opts.fv)?opts.fv:null;
@@ -20435,6 +21167,16 @@ let srRandHistory=null, srRandHistIdx=-1;
    Right/Forward. Moving into a position that already exists in history just
    re-selects that earlier track (no new generation, no lost progress);
    moving past either end mints one new track and extends history there. */
+/* Mint the next random-tile seed: eight candidates down the same LCG chain,
+   screened by the SEED PREFERENCE MODEL against the parameter set each would
+   actually launch with. Deterministic chain, so history stays reproducible. */
+function _srMint(from,inc){
+  const c=[]; let x=from>>>0;
+  for(let i=0;i<8;i++){ x=(x*1103515245+inc)>>>0; c.push(x); }
+  const keep=srRandSeed, keepO=srOverrides;
+  const pf=(sd)=>{ srRandSeed=sd; srOverrides=null; const o=srBuildParams(0); srRandSeed=keep; srOverrides=keepO; return o; };
+  try{ return pickPreferredSeed(c,pf); }finally{ srRandSeed=keep; srOverrides=keepO; }
+}
 function srRandNav(dir){
   if(!srRandHistory||!srRandHistory.length){
     srRandHistory=[(srRandSeed>>>0)]; srRandHistIdx=0;
@@ -20444,7 +21186,7 @@ function srRandNav(dir){
     srRandHistIdx=newIdx;
     srRandSeed=srRandHistory[srRandHistIdx]>>>0;
   } else if(dir<0){
-    const ns=(srRandSeed*1103515245+12345)>>>0;
+    const ns=_srMint(srRandSeed,12345);
     srRandHistory.unshift(ns);
     srRandHistIdx=0;
     srRandSeed=ns;
@@ -20453,7 +21195,7 @@ function srRandNav(dir){
        discarding the entries near where the player currently is. */
     if(srRandHistory.length>CAP)srRandHistory.pop();
   } else {
-    const ns=(srRandSeed*1103515245+54321)>>>0;
+    const ns=_srMint(srRandSeed,54321);
     srRandHistory.push(ns);
     srRandHistIdx=srRandHistory.length-1;
     srRandSeed=ns;
@@ -20611,7 +21353,7 @@ function srBuildParams(mode){
 }
 
 /* All editable rows in the RANDOM tile: parameters + the extra controls. */
-const SR_COL_ORDER=[['Geometry','Track Shape','Pacing'],['Features','Safety'],
+const SR_COL_ORDER=[['Geometry','Track Shape','Pacing'],['Features','Safety','Engine'],
                     ['Visuals','Effects','Mechanics']];
 function srEditRows(){
   const rows=[];
@@ -20629,7 +21371,7 @@ function srRenderTiles(){
   /* Column order requested: Geometry / Pacing / Safety stacked in col 1,
      Features in col 2, Visuals / Effects / Mechanics stacked in col 3. */
   const COLS=SR_COL_ORDER;
-  const secCol={Geometry:'#7fd0ff','Track Shape':'#9ae6ff',Pacing:'#ffd23a',
+  const secCol={Geometry:'#7fd0ff','Track Shape':'#9ae6ff',Pacing:'#ffd23a',Engine:'#6af0ff',
     Features:'#a6ffc8',Visuals:'#ff9ad0',Safety:'#ff8a6a',Effects:'#c0a0ff',
     Mechanics:'#8fe8b0'};
 
@@ -20671,6 +21413,8 @@ function srRenderTiles(){
     let h='<div class="sr-extras">';
     h+='<div class="sr-psec-t" style="color:#ffd23a">TRACK SETUP</div>';
     h+='<div class="sr-seed">SEED '+(srRandSeed>>>0)+'</div>';
+    try{ const _M=_pmModel(); if(_M.conf){ const _f=seedFit(srRandSeed>>>0,vals);
+      h+='<div class="sr-seed" style="color:'+(_f>=0.6?'#a6ffc8':_f<=0.4?'#ff8a6a':'#ffd23a')+'">FIT '+Math.round(_f*100)+'%</div>'; } }catch(e){}
     for(let i=0;i<SR_EXTRA.length;i++){
       const e=SR_EXTRA[i];
       const isSel=srEdit&&rows[srEditRow]&&rows[srEditRow].k===e.k;
@@ -20745,6 +21489,8 @@ function srRenderTiles(){
   if(hEl)hEl.innerHTML=srEdit
     ?'\u25b2\u25bc ROW &nbsp;\u00b7&nbsp; \u25c0\u25b6 VALUE &nbsp;\u00b7&nbsp; X EXIT EDIT &nbsp;\u00b7&nbsp; A RACE'
     :'\u25b2\u25bc SELECT TILE &nbsp;\u00b7&nbsp; \u25c0\u25b6 CHANGE &nbsp;\u00b7&nbsp; X EDIT &nbsp;\u00b7&nbsp; A RACE &nbsp;\u00b7&nbsp; B CLOSE';
+  /* Keep the selected edit row visible now that columns scroll. */
+  try{ const _sel=document.querySelector('#_sr_rand .sr-sel'); if(_sel&&_sel.scrollIntoView)_sel.scrollIntoView({block:'nearest'}); }catch(e){}
 }
 
 /* Adjust the currently selected edit row by dir (-1 or +1). */
@@ -21225,7 +21971,8 @@ function srDebugActivate(){
     'BOULEVARD','METROPOLIS','DOWNTOWN','INDUSTRIAL','NEON_DISTRICT','WILDERNESS','HIGH_STEPPE',
     'CRYSTAL_WASTE','EMBER_FIELDS'];
   for(let i=0;i<100;i++){
-    const sd=((base^(i*2246822519))>>>0)||1;
+    /* Four candidates per slot, screened by the preference model. */
+    const sd=pickPreferredSeed([0,1,2,3].map(k=>((base^(i*2246822519)^Math.imul(k,0x27d4eb2f))>>>0)||1));
     // Co-prime strides guarantee every track hits a distinct combination
     // (12 archetypes × 7 styles × 21 profiles = 1764 combos, no repeats in 100).
     dm._forceVariety={
@@ -21317,6 +22064,45 @@ window.DriveMode={start,exit,get active(){return dm.active;},
     return {corr:Math.abs(num/Math.sqrt(dl*ds||1)), minLaneGap:gap, n:n};
   },
   demoShots:()=>({shots:_DEMO_SHOTS.length,rates:_DEMO_RATE.length}),
+  /* QA: render the current frame with the 2D path and with the GPU batch
+     and report how far apart they are (engine plan E3). */
+  renderCompare:(withImages)=>{ try{
+    if(!canvas||!ctx||!P)return null;
+    const vw=canvas.width, vh=canvas.height, keep=(typeof window!=='undefined')?window.ZS_GPU_BATCH:undefined;
+    const shot=()=>ctx.getImageData(0,0,vw,vh);
+    /* Warm both paths first: buildings finish generating over several
+       frames and would otherwise read as a difference. */
+    for(let w=0;w<6;w++){ window.ZS_GPU_BATCH=(w&1)===0; renderWorld(vw,vh,0); }
+    window.ZS_GPU_BATCH=false; renderWorld(vw,vh,0); const A=shot();
+    let t0=performance.now(); renderWorld(vw,vh,0); const tA=performance.now()-t0;
+    window.ZS_GPU_BATCH=true; GLBatch.reset(); renderWorld(vw,vh,0);
+    const f0=GLBatch.stats.flushes; t0=performance.now(); renderWorld(vw,vh,0); const tB=performance.now()-t0;
+    const fl=GLBatch.stats.flushes-f0; const B=shot();
+    window.ZS_GPU_BATCH=false; renderWorld(vw,vh,0); const C=shot();   // noise baseline: 2D vs 2D
+    window.ZS_GPU_BATCH=keep;
+    const dif=(X,Y)=>{ let sum=0,big=0; const a=X.data,b=Y.data;
+      for(let i=0;i<a.length;i+=4){ const d=(Math.abs(a[i]-b[i])+Math.abs(a[i+1]-b[i+1])+Math.abs(a[i+2]-b[i+2]))/3; sum+=d; if(d>40)big++; }
+      return [+(sum/(a.length/4)).toFixed(3),+(big/(a.length/4)*100).toFixed(3)]; };
+    const dB=dif(B,C), dN=dif(A,C);
+    const o={meanDiff:dB[0],bigPct:dB[1],noiseMean:dN[0],noiseBig:dN[1],ms2d:+tA.toFixed(2),msBatch:+tB.toFixed(2),flushes:fl};
+    if(withImages){ const c=document.createElement('canvas'); c.width=vw; c.height=vh; const g=c.getContext('2d');
+      g.putImageData(A,0,0); o.imgA=c.toDataURL('image/png'); g.putImageData(B,0,0); o.imgB=c.toDataURL('image/png'); }
+    return o;
+  }catch(e){ return {error:e.message,stack:String(e.stack).split('\n').slice(0,3).join(' | ')}; } },
+  /* Engine status / switches (engine plan). */
+  engine:(o)=>{ try{
+    if(o&&'batch' in o){ window.ZS_GPU_BATCH=!!o.batch; if(o.batch)GLBatch.reset(); }
+    const st=GLBatch.stats;
+    return {batch:GLBatch.available(),flushes:st.flushes,frames:st.frames,batched:st.batched,passed:st.passed,
+            vertsPerFrame:st.frames?Math.round(st.verts/st.frames):0,flushesPerFrame:st.frames?+(st.flushes/st.frames).toFixed(1):0,
+            disabledFor:st.disabledFor||null,gpu:GLBatch.gpu(),calibration:GLBatch.calibration(),
+            perf:{worldMs:+_perf.world.toFixed(2),loopMs:+_perf.loop.toFixed(2),frameMs:+(_ftAvg||0).toFixed(2),quality:+(_q||0).toFixed(2),res:_resScale()},
+            caps:ENGINE_CAPS,view:_camMode};
+  }catch(e){ return {error:e.message}; } },
+  /* Preference model (plan part 5). */
+  pickSeed:(c)=>pickPreferredSeed(c),
+  seedFit:(sd)=>seedFit(sd>>>0),
+  prefSummary:()=>prefSummary(),
   /* QA: sample every attract shot over its whole 7-second slot at 60 Hz,
      through the same guard and envelope the renderer applies, and report
      per-axis ranges, non-finite values and the largest single-frame jump
@@ -21422,6 +22208,8 @@ window.DriveMode={start,exit,get active(){return dm.active;},
       }
       let eco=0; for(let i=0;i<N;i++)if(segments[i]._eco&&segments[i]._eco!==theme.biome)eco++;
       o.ecotonePct=+(eco/N*100).toFixed(1);
+      let bk=0,sf=0,vd=0; for(let i=0;i<N;i++){ const g=segments[i]; if(g.bank&&Math.abs(g.bank)>0.2)bk++; if(g.surf)sf++; if(g.voidDeck)vd++; }
+      o.bankPct=+(bk/N*100).toFixed(1); o.surfPct=+(sf/N*100).toFixed(1); o.skyPct=+(vd/N*100).toFixed(1);
       o.trees=trees; o.buildings=blds; o.landforms=land; o.env=(segments._env&&segments._env.k.length)||0;
       o.formsPerWindow=+(forms/Math.max(1,wins)).toFixed(2);
       o.treeHueSpread=+(hueSd/Math.max(1,wins)).toFixed(1);
@@ -21561,6 +22349,9 @@ const _SR_FEAT_LABELS={
   zigzagstorm:'Zig-Zag Storm', megaelevation:'Mega Elevation',
   cliffdrop:'Cliff Drop', rollerwave:'Roller Wave', spiralstair:'Spiral Stair',
   blindsnap:'Blind Snap', slingshot:'Slingshot',
+  bankedoval:'Banked Oval', skyhighway:'Sky Highway', icerink:'Ice Rink', dirtrally:'Dirt Rally',
+  banked:'Banked Corners', surf_ice:'Ice Surface', surf_dirt:'Dirt Surface', surf_sand:'Sand Surface',
+  surf_metal:'Metal Grating', surf_glass:'Glass Deck', surf_lava:'Lava Crust', surf_grass:'Grass Track',
   turbotornado:'Turbo Tornado', rainbowroad:'Rainbow Road',
   absurd_spaghetti:'Spaghetti Section', absurd_staircase:'Staircase Climb',
   absurd_ribbon:'Ribbon Narrows', absurd_pinch:'Pinch Section',
@@ -21645,6 +22436,8 @@ const _SR_FEAT_ORDER=[
   'absurd_megatube','absurd_washboard','weather',
   'tube','bridge','underpass','mirrorstraight','zigzagstorm','megaelevation',
   'cliffdrop','rollerwave','spiralstair','blindsnap','slingshot',
+  'skyhighway','bankedoval','banked','icerink','dirtrally','surf_ice','surf_dirt','surf_sand',
+  'surf_metal','surf_glass','surf_lava','surf_grass',
   'turbotornado','rainbowroad','ramp','gap','boost',
   'verticalloop','hyperlane','bottleneck',
   'flyover','split','corkscrew','phase','wallride','mesh',
@@ -21867,8 +22660,9 @@ window.BestCourses={open:bcOpen,close:bcClose,list:bcLoad,count:()=>bcLoad().len
 try{bcIdbRestore();}catch(e){}
 try{_idbRestore(TRASH_KEY,()=>!trashLoad().length);}catch(e){}
 window.TrashList={list:trashLoad,count:()=>trashLoad().length,add:trashCurrent,
-  profile:trashGetProfile,weight:trashWeight,clear(){trashStore([]);}};
-window.LikeModel={profile:likeGetProfile,weight:likeWeight};
+  profile:trashGetProfile,clear(){trashStore([]);}};
+/* The learned good/bad model (see SEED PREFERENCE MODEL). */
+window.LikeModel={profile:likeGetProfile,fit:(sd)=>seedFit(sd>>>0),summary:prefSummary,pick:pickPreferredSeed};
 
 const ALGO_PARAMS=[
   // ── SECTION 1: GEOMETRY (corners, elevation, straights)
@@ -21932,6 +22726,16 @@ const ALGO_PARAMS=[
   {k:'_feat_rainbowroad',sec:'Track Shape',min:0,max:2.5, step:1, desc:'Rainbow Road absurd section (0 or 1)', def:1.0},
   {k:'_feat_turbotornado',sec:'Track Shape',min:0,max:2.5,step:1, desc:'Turbo Tornado absurd section (0 or 1)', def:1.0},
   {k:'_feat_zigzagstorm',sec:'Track Shape',min:0,max:3.75, step:1, desc:'Zigzag Storm absurd sections', def:1.5},
+  // ── ENGINE: track types the updated pseudo-3D engine can now draw (plan part 3)
+  {k:'_bankOdds',       sec:'Engine', min:0,max:1,   step:0.05, desc:'Share of long corners that are BANKED (horizon tilts, extra grip)', def:0.30},
+  {k:'_bankAmount',     sec:'Engine', min:0,max:1.2, step:0.05, desc:'Bank steepness: 0 flat, 1.2 near-vertical wall', def:0.75},
+  {k:'_surfaceOdds',    sec:'Engine', min:0,max:1,   step:0.05, desc:'Chance the track lays biome surfaces (ice, sand, dirt, grass, lava, metal)', def:0.45},
+  {k:'_surfaceShare',   sec:'Engine', min:0,max:0.6, step:0.02, desc:'Share of the lap on a special surface', def:0.16},
+  {k:'_skyHighwayOdds', sec:'Engine', min:0,max:1,   step:0.05, desc:'Chance of a SKY HIGHWAY: road floating over open sky', def:0.18},
+  {k:'_feat_bankedoval',sec:'Engine', min:0,max:6,   step:1,    desc:'Banked-oval sections per track', def:2},
+  {k:'_feat_skyhighway',sec:'Engine', min:0,max:6,   step:1,    desc:'Sky-highway sections per track', def:2},
+  {k:'_feat_icerink',   sec:'Engine', min:0,max:6,   step:1,    desc:'Ice-rink sections per track', def:2},
+  {k:'_feat_dirtrally', sec:'Engine', min:0,max:6,   step:1,    desc:'Dirt-rally sections per track', def:2},
   {k:'_landmarkMix',     sec:'Geometry', min:0,max:10, step:1, desc:'Landmark corners (Eau Rouge, Corkscrew, 130R) per track', def:4.0},
   {k:'_feat_sideways',   sec:'Geometry', min:0,max:5, step:1, desc:'Sideways runs - camera rolls, drive on screen edge (rare)', def:0},
   {k:'_trackLength',     sec:'Track Shape',min:1.25,max:6.25, step:1, desc:'Track length multiplier (1=short 5=very long)', def:3.0},
@@ -24034,7 +24838,9 @@ function nextDemoTrack(){
     if(window.DriveMode.setSfxMuted)window.DriveMode.setSfxMuted(true);
     if(window.DriveMode.isActive&&window.DriveMode.isActive()&&window.DriveMode.exit)
       window.DriveMode.exit();
-    const sd=((Date.now()>>>0)^((Math.random()*4294967296)>>>0))>>>0||1;
+    const _c=[]; for(let k=0;k<6;k++)_c.push(((Date.now()>>>0)^((Math.random()*4294967296)>>>0))>>>0||1);
+    /* The attract demo shows the kind of track the player has liked. */
+    const sd=(window.DriveMode.pickSeed?window.DriveMode.pickSeed(_c):_c[0])>>>0;
     _demoTrackAt=Date.now();
     window.DriveMode.start(sd,{demo:true});
     /* No random base viewpoint any more: the shot table is authored against

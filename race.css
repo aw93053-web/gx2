@@ -733,3 +733,5 @@ body.zs-sr-water #zs-waterfx.zs-nofluid{display:block!important}
 #_sr_rand .sr-tile-body{display:flex;flex-direction:row;align-items:flex-start;gap:10px}
 #_sr_rand .sr-prev{flex:0 0 auto;width:min(34%,520px);height:auto;max-height:100%;align-self:flex-start}
 #_sr_rand .sr-cols{flex:1 1 0;min-width:0}
+/* Super Racing edit tile: columns scroll so every parameter row (including ENGINE) stays reachable; the selected row is kept in view by srRenderTiles. */
+.sr-col{max-height:calc(100vh - 230px);overflow-y:auto;scrollbar-width:thin}
