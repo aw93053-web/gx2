@@ -6606,6 +6606,10 @@ function _buildTrackImpl(seed){
         const esd=rng()<0.5?-1:1;
         if(rng()>_sideOf(esd).veg)continue;
         const pl=_mkPlant(esd);
+        /* Road signs belong at the road edge. This deep-planting pass pushes
+           plants up to ~4 road widths out, which left autobahn signs
+           standing alone in fields (request 6 item 4). */
+        if(pl.veg==='sign')continue;
         pl.off+=rng()*(1.4+_mode.wild*2.4);
         // Immutable draw tier — decided once, never re-evaluated at runtime.
         pl.tier=e%4;
@@ -6641,6 +6645,7 @@ function _buildTrackImpl(seed){
       const sg=segments[i];
       if(!sg||sg.gap||sg.ramp)continue;
       const pl=_mkPlant(rng()<0.5?-1:1);
+      if(pl.veg==='sign')continue;               // signs only at the road edge
       pl.off+=rng()*1.6;
       pl.tier=0;                      // floor plants are always drawn
       (sg.extraVeg||(sg.extraVeg=[])).push(pl);
@@ -9554,6 +9559,15 @@ function updatePlayer(dt,inp){
     if(!P._offMsg){P._offMsg=true;showMsg('\u26a0 OFF THE RACING LINE');}
   } else if(!offRoad){P._offMsg=false;P._offT=0;}
   // Falling into a chasm with no road beneath is instant destruction.
+  /* ═══ A CLEAN JUMP NEVER FALLS SHORT  Airtime is a wall-clock budget but the
+     distance flown is simulated; on a slow or hitching frame rate the budget
+     could run out mid-gap and a machine driven straight down the middle off
+     the ramp was destroyed. A jump launched at this hole stays airborne
+     until it has crossed the far edge. */
+  if(s.gap&&!(P.airUntil>now)&&P._jumpClearZ!=null&&P.airStart&&now-P.airStart<8000){
+    const _toEdge=(P._jumpClearZ-P.z+trackLength)%trackLength;
+    if(_toEdge<SEG_LEN*80)P.airUntil=now+Math.max(STEP*1000,(_toEdge/Math.max(1,P.speed))*1000+60);
+  }
   if(s.gap&&!(P.airUntil>now)&&!race.exploding&&!race.gameOver){
     _recordDeath('fell-into-gap',{airUntil:P.airUntil-now});
     P.power=0;race.exploding=true;race.explodeT=0;race.explodeX=P.x;P.speed=0;
@@ -10285,6 +10299,9 @@ var _leanHelp=0;
         else if(_gapSegs>0)break;          // past the far edge of the hole
         _gi=(_gi+1)%segments.length; _scan++;
       }
+      /* Far edge of the hole this ramp is aimed at: the gap check below
+         keeps a committed jump in the air until it has crossed it. */
+      P._jumpClearZ=(_gapSegs>0)?((_gi+2)%segments.length)*SEG_LEN:null;
       if(_gapSegs>0&&P.speed>1){
         const _needMs=((_gapSegs+3)*SEG_LEN/P.speed)*1000*1.15;
         const _baseMs=(_splitJump?AIR_TOTAL*1.6:AIR_TOTAL);
@@ -11756,7 +11773,9 @@ const _DEMO_RATE=[
   1.8, 2.0, 2.0, 1.9, 2.2, 3.2, 1.7, 2.0, 3.0, 1.4,
   1,    1.5,  1.2,  1,    1,    1,    2.8,  2.0,  1.6,  1,
   /* 145 ROUND AND ROUND — barrel roll along the line of sight. */
-  1
+  1,
+  /* 146-150: cockpit ride, heli follow, drone weave, crane dive, bank rider */
+  1,    1,    1,    1.2,  1
 ];
 /* ZOOM IS A RATIO, ITS NEUTRAL IS 1 (plan item 13). Six shots (108, 118,
    119, 126, 127, 133) wrote zoom as (1+X)*fade, which drives it to 0 —
@@ -12341,8 +12360,33 @@ const _DEMO_SHOTS=[
             0.55*Math.cos(a)]; },
 
   function(p){
-    return [0, 1.18, 0.28, 0.18, p*Math.PI*2*3, 0, 0]; }
+    return [0, 1.18, 0.28, 0.18, p*Math.PI*2*3, 0, 0]; },
+
+  /* ══ SHOTS 146-150 — THE NEW ENGINE CAMERAS (request 6 item 5) */
+  /* 146 COCKPIT RIDE — the first-person eye: Z-traverse onto the machine,
+        helmet height, the cockpit overlay drawn and the car sprite hidden
+        (see _demoFpv), rolling with lean and the road's banking. */
+  function(p){ const lr=P?Math.max(-0.55,Math.min(0.55,P.lean||0))*0.16:0;
+    return [0.05*Math.sin(p*Math.PI*2), 1, -0.58, 0.02, lr, 4.35, 0]; },
+  /* 147 HELI FOLLOW — the driving heli view: high, trailing, pitched down,
+        with a slow drift across the line. */
+  function(p){ const a=Math.sin(p*Math.PI*2);
+    return [0.22*a, 1.30, 1.05, 0.28, 0.03*a, -2, 0.25*a]; },
+  /* 148 DRONE WEAVE — the drone view: swings side to side across the road,
+        yaw countering the drift so the car stays framed. */
+  function(p){ const a=Math.sin(p*Math.PI*2*0.9);
+    return [0.55*a, 1.25, 0.46+0.10*Math.sin(p*Math.PI*3.7), 0.12, 0.07*a, 0, 0.45*a]; },
+  /* 149 CRANE DIVE — starts high over the road ahead and dives down in
+        front of the machine to deck level as it arrives. */
+  function(p){ const e=_sStep(p);
+    return [0.30*(1-e), 1.6-0.5*e, 2.2*(1-e)-0.40*e, 0.60*(1-e)+0.06*e, 0, 20*(1-e)-2*e, 0]; },
+  /* 150 BANK RIDER — a low kerb-side camera whose roll follows the road:
+        banked corners, loops and off-camber crests tilt the whole frame. */
+  function(p){ let r=0; try{ const g=seg(P.z); r=(g&&g.bank?-g.bank*0.5:0)+(g&&g.loopRoll!=null?g.loopRoll:0); }catch(e){}
+    return [0.30+0.08*Math.sin(p*Math.PI*2), 1.12, -0.22, 0.06, r, 1.5, 0.85]; }
 ];
+/* The cockpit shot hides the machine and draws the first-person cockpit. */
+function _demoFpv(){ return !!(dm.demo&&race&&race.attract&&dm._lastDemoShot===146&&!dm._dbgView); }
 
   /* ── RENDER-ONLY INTERPOLATED POSITIONS  _rz / _rx are what the RENDERER reads; z / x remain the authoritative physics values and are never touched here. */
 function _lerpZ(a,b,t){
@@ -16830,6 +16874,10 @@ function drawProp(sp,vw,vh){
       ctx.beginPath();ctx.ellipse(bxx,y0-h*0.30*BF.h,w*0.30*BF.w,h*0.34*BF.h,0,0,Math.PI*2);ctx.fill();
     }
   } else if(spr.veg==='sign'){
+    /* A sign moved away from the road edge by any later scenery pass is not
+       drawn: an autobahn sign with no carriageway beside it makes no sense. */
+    const _fm=spr.form|0, _so=Math.abs(spr.off||0);
+    if(_so>((_fm===3)?2.5:(_fm===4?0.6:3.0))){ ctx.restore(); return; }
     const night2=isNight();
     const form=spr.form|0;
     const steel=night2?'#39414b':'#59626d';
@@ -17872,7 +17920,7 @@ function drawPlayerMachine(vw,vh,camPan){
     dm._playerCarW=vw*0.08925*_carScale;
   }
 // (21) FIRST PERSON: you ARE the machine, so the machine is not drawn.
-  if(_camMode===5)return;
+  if(_camMode===5||_demoFpv())return;
   let baseY=vh-~~(vh*0.10)+_carYOff;
   if(dm._carRoadK>0&&dm._carRoadY!=null)
     baseY=baseY+(dm._carRoadY-baseY)*dm._carRoadK;
@@ -18780,6 +18828,27 @@ function drawHUD(vw,vh){
      power/speed, the minimap and the turbo readout are all suppressed so the
      screen behind the title stays clean. */
   if(dm.demo)return;
+  /* ═══ HUD IN SCREEN PIXELS (request 6 item 2). The HUD is laid out in
+     fixed pixels (a 228 px panel, 26-30 px readouts), but it was drawn in
+     CANVAS pixels — and the canvas backing store shrinks whenever the
+     resolution governor lowers quality (and is capped at 1800 px wide). At a
+     0.6 resolution step every panel was 1.7x larger on screen, pushing the
+     power/speed/time block off the edge and clipping text. The HUD is now
+     drawn under a transform that maps its pixels to screen pixels, times a
+     size factor that keeps it proportionate on small and large windows. */
+  const _S=_hudScale(vw,vh);
+  if(Math.abs(_S-1)>0.005){ ctx.save(); ctx.scale(_S,_S); try{ _drawHUDMain(vw/_S,vh/_S); } finally{ ctx.restore(); } return; }
+  _drawHUDMain(vw,vh);
+}
+let _hudCssK=1;
+function _hudScale(vw,vh){
+  const cw=(canvas&&canvas.clientWidth)||vw, ch=(canvas&&canvas.clientHeight)||vh;
+  const k=vw/Math.max(1,cw);
+  const ui=Math.max(0.62,Math.min(1.25,Math.min(cw/1150,ch/640)));
+  _hudCssK=ui;
+  return k*ui;
+}
+function _drawHUDMain(vw,vh){
   const now=performance.now();
   const turboOn=now<P.turboUntil;
   const lvl=turboOn?Math.max(1,Math.min(TURBO_MAX,P.turboStack||1)):0;
@@ -20294,6 +20363,55 @@ function _driveFps(ms){
     _dfCount=0;_dfPrev=ms;
   }
 }
+/* ═══ THE "SINGLE-COLOUR SCREEN UNTIL DEVTOOLS OPENS" BUG (request 6 item 3)
+   Opening the developer tools resizes the window, and resizing assigns
+   canvas.width — which resets the WHOLE 2D context: transform, clip, alpha,
+   compositing and the save() stack. That reset is what "fixed" the picture,
+   so the stuck state is canvas state leaking from one frame into the next
+   (an unbalanced save/clip, a transform or alpha left behind). Three guards:
+     1. every frame starts from a clean context (restores any leaked save()s
+        and resets transform, alpha, compositing, filter and shadow);
+     2. every race does the full reset itself twice, shortly after it starts
+        (120 ms and 650 ms), exactly like the devtools resize;
+     3. a watchdog samples the race picture twice a second and, if it stays a
+        single flat colour for ~1.5 s during play, performs that reset. */
+function _ctxSanitize(){
+  if(!ctx||!canvas||ctx.canvas!==canvas)return;
+  try{
+    for(let i=0;i<24;i++)ctx.restore();
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over';
+    if('filter' in ctx)ctx.filter='none';
+    ctx.shadowBlur=0; ctx.shadowColor='rgba(0,0,0,0)';
+    ctx.imageSmoothingEnabled=false;
+  }catch(e){}
+}
+function _hardCanvasReset(why){
+  try{
+    if(!canvas)return;
+    const w=canvas.width; canvas.width=w;              // full context reset
+    if(ctx)ctx.imageSmoothingEnabled=false;
+    try{ _camCutReset(); }catch(e){}
+    dm._roadTopSm=null; dm._horizonY=null;
+    try{ window.dispatchEvent(new Event('resize')); }catch(e){}
+    if(why)console.warn('ZS render reset:',why);
+  }catch(e){}
+}
+let _stuckCv=null,_stuckN=0;
+function _stuckCheck(){
+  try{
+    if(!canvas||!race||race.paused||race.over||race.intro||dm.demo)return;
+    if(!_stuckCv){ _stuckCv=document.createElement('canvas'); _stuckCv.width=4; _stuckCv.height=4; }
+    const c=_stuckCv.getContext('2d',{willReadFrequently:true});
+    c.drawImage(canvas,0,0,4,4);
+    const d=c.getImageData(0,0,4,4).data;
+    let mn=[255,255,255],mx=[0,0,0];
+    for(let i=0;i<d.length;i+=4)for(let k=0;k<3;k++){ if(d[i+k]<mn[k])mn[k]=d[i+k]; if(d[i+k]>mx[k])mx[k]=d[i+k]; }
+    const flat=(mx[0]-mn[0]<4&&mx[1]-mn[1]<4&&mx[2]-mn[2]<4);
+    _stuckN=flat?_stuckN+1:0;
+    if(_stuckN>=3){ _stuckN=0; _hardCanvasReset('flat frame for 1.5 s'); }
+  }catch(e){}
+}
 function frame(ms){
   // The pause logo is a DOM element: hide it as soon as the pause screen stops being drawn.
   if(dm._pauseLogoFrame&&performance.now()-dm._pauseLogoFrame>150){ dm._pauseLogoFrame=0; try{_pauseLogo(false);}catch(e){} }
@@ -20306,6 +20424,7 @@ function frame(ms){
      (below) owns the value. */
   if(race&&race.attract&&!dm.demo) _q=Math.min(_q,0.48);  // skip M7 entirely for performance
   try{ if(dm._ensureSize)dm._ensureSize(); }catch(e){}
+  _ctxSanitize();
     /* (2)(3)(4) FLUID EFFECT DURING A RACE. One shared instance serves all three uses; which one is active depends on where the car is. */
   try{
       /* (2) TUNNEL PATTERNS MUST NOT DEPEND ON WEBGL. This whole block was gated on WaterFX.available(), which reports whether a WebGL fluid context could be created. tunnelfx. */
@@ -20433,6 +20552,7 @@ function frame(ms){
   _driveFps(ms);
   _rsDebug();          // right-stick diagnostic readout in the debug box
   if(!dm.active)return;
+  const _wallMs=ms-lastMs;
   let dtReal=(ms-lastMs)/1000;if(!(dtReal>0)||dtReal>0.25)dtReal=STEP;
   lastMs=ms;
   _frameStart=performance.now();
@@ -20676,6 +20796,7 @@ function frame(ms){
   }else{
     // fixed-timestep physics
       /* ═══ RENDER INTERPOLATION — THE MICROSTUTTER  Physics runs at a fixed 60 Hz, but the display almost never does. */
+    const _acc0=acc;
     acc+=dtReal*_bumpTimeScale();let steps=0;
     while(acc>=STEP&&steps<4){
         /* Snapshot INSIDE the loop, immediately before each step — not once per rendered frame. */
@@ -20698,6 +20819,19 @@ function frame(ms){
     dm._alpha=Math.max(0,Math.min(1,acc/STEP));
     _interpBodies(dm._alpha);
     if(steps===4)acc=0;
+    /* ═══ AIRTIME FOLLOWS SIMULATED TIME  Jumps are timed in wall-clock ms
+       while the machine only moves on physics steps. Time the loop did not
+       simulate this frame (step cap, a long hitch, bump slow-mo) is added to
+       every live airtime, so a jump always covers the distance it was
+       budgeted for whatever the frame rate. */
+    {
+      const _lost=_wallMs-(steps*STEP+(acc-_acc0))*1000;
+      if(_lost>0.5&&_lost<5000){
+        const _n=performance.now();
+        if(P&&P.airUntil>_n){P.airUntil+=_lost;P.airStart+=_lost;}
+        for(const r of rivals)if(r.airUntil>_n){r.airUntil+=_lost;r.airStart+=_lost;}
+      }
+    }
     if(race.exploding){
       race.explodeT+=dtReal;P.speed=Math.max(0,P.speed-MAX_SPEED*1.5*dtReal);
       if(race.explodeT>1.35){race.exploding=false;race.gameOver=true;race.over=true;race.resultAnimT=0;_smokeParts=null;dm._goFx=null;dm._lastHitFatal=true;gameOverRumble();}
@@ -20897,7 +21031,7 @@ function frame(ms){
   }
   if(race.exploding)drawExplosion(vw,vh);
 // ── (21) FIRST-PERSON COCKPIT FRAME  Drawn over the world but under the HUD and the vignette, so the HUD still floats on top as normal.
-  if(_camMode===5&&!race.paused&&!race.over&&(!race.attract||(dm._dbgView&&dm._dbgView.fpv))){
+  if((_camMode===5||_demoFpv())&&!race.paused&&!race.over&&(!race.attract||_demoFpv()||(dm._dbgView&&dm._dbgView.fpv))){
     const night=isNight();
     const lean=clamp((P&&P.lean)||0,-0.55,0.55);
     ctx.save();
@@ -21308,7 +21442,9 @@ function _drvLogoSync(x,y){
     _drvLogoEl.style.display=race.paused?'none':'block';
     const _sold=document.getElementById('soldier-img');
     if(_sold&&_sold.style.display!=='none')_sold.style.display='none';
-    _drvLogoEl.style.left=x+'px';_drvLogoEl.style.top=y+'px';
+    _drvLogoEl.style.left=(x*_hudCssK)+'px';_drvLogoEl.style.top=(Math.max(2,y-6)*_hudCssK)+'px';
+    /* Sized with the canvas HUD so the mark never overlaps the RANK row. */
+    _drvLogoEl.style.transformOrigin='0 0';_drvLogoEl.style.transform='scale('+_hudCssK.toFixed(3)+')';
   }catch(e){}
 }
 function _drvLogoRemove(){try{if(_drvLogoEl){_drvLogoEl.remove();_drvLogoEl=null;}}catch(e){}}
@@ -21455,6 +21591,9 @@ function start(seed,opts){
     const _kick=()=>{ try{ rs(); }catch(e){} try{ window.dispatchEvent(new Event('resize')); }catch(e){} };
     try{ requestAnimationFrame(()=>requestAnimationFrame(_kick)); }catch(e){}
     setTimeout(_kick,300); setTimeout(_kick,1200);
+    setTimeout(()=>_hardCanvasReset(),120); setTimeout(()=>_hardCanvasReset(),650);
+    if(dm._stuckIv)clearInterval(dm._stuckIv);
+    _stuckN=0; dm._stuckIv=setInterval(_stuckCheck,500);
   }
   ctx=canvas.getContext('2d',{alpha:false});
   try{ctx.imageSmoothingEnabled=false;}catch(e){}
@@ -21509,6 +21648,7 @@ function start(seed,opts){
   raf=requestAnimationFrame(frame);
 }
 function exit(){
+  try{ if(dm._stuckIv){ clearInterval(dm._stuckIv); dm._stuckIv=0; } }catch(e){}
   try{_pauseLogo(false);}catch(e){}
   resetOrbitState();   // (2) never leave the projector zoomed or rotated
   if(!dm.active)return;
@@ -24556,6 +24696,8 @@ window.DriveDebug={
   placeRival(segAhead,dx){ if(!P||!rivals||!rivals.length)return false; const r=rivals[0];
     r.z=(P.z+SEG_LEN*(segAhead||40))%trackLength; r.x=clamp(P.x+(dx==null?0.35:dx),-0.9,0.9); r.speed=P.speed*0.85; r._stunUntil=0; return true; },
   bumpPose(o){ dm._bumpPoseTest=o||null; },
+  /* QA: the parameter set the Super Racing random tile would launch a seed with. */
+  srParamsFor(seed){ const kS=srRandSeed, kO=srOverrides; try{ srRandSeed=seed>>>0; srOverrides=null; return JSON.parse(JSON.stringify(srBuildParams(0))); } finally{ srRandSeed=kS; srOverrides=kO; } },
   rivalLockTest(ms){ dm._rivalLockUntil=performance.now()+(ms||1500); },
   bumpHold(ms,dir){ if(!dm._bumpZoom)dm._bumpZoom={t:0,dir:1,cut:true}; dm._bumpZoom.t=performance.now()-ms; if(dir)dm._bumpZoom.dir=dir; if(dm._bumpCard)dm._bumpCard.t=performance.now()-Math.max(ms,700); if(dm._impactFlash)dm._impactFlash.t=performance.now()-ms; },
   bumpState(){ return {card:dm._bumpCard?Object.assign({},dm._bumpCard):null,strike:!!(P&&P._strike),slow:!!dm._slowMo,

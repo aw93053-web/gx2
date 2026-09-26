@@ -197,3 +197,28 @@ Over 40 seeds, speedway banking appears on 30 tracks. The feature count and its 
 **Super Racing:**
 - FEATURES tab: counts for LOOP-DE-LOOP and LOOP-BACK CROSSOVER.
 - ENGINE tab: LOOP-DE-LOOP CHANCE and CROSSOVER CHANCE.
+
+## Round 6 fixes
+
+1. **Deaths on a clean jump (seed 3171490621).**
+   - **Cause:** a jump's airtime was a wall-clock budget, but the machine only moves on physics steps, and those are capped at 4 per frame with the backlog thrown away. On a slow or hitching frame rate (or during the bump slow-mo), the budget ran out while the machine was still over the hole, which counted as "fell into the void".
+   - **Reproduced:** on this seed, driving straight off the ramp at full speed killed the machine in 2 of 12 trials.
+   - **Fixes:**
+     - Time the loop does not simulate in a frame is now added to every live airtime.
+     - A jump launched at a hole also stays in the air until it has crossed that hole's far edge.
+   - **Result:** 12 of 12 trials survive. Missing the landing off the side of the road still kills.
+2. **HUD too large or cut off.** The HUD is drawn in CSS-pixel space, scaled with the window (0.62×–1.25×), so a lower internal render resolution no longer inflates it. The DOM corner logo follows the same scale.
+3. **Track loads as a single flat colour.**
+   - **Every frame:** the canvas state is reset (transform, alpha, blend, filter, shadow and any unbalanced save/clip).
+   - **After a race starts:** the canvas is hard-reset twice, at 120 ms and 650 ms. This is the same thing opening the developer tools used to do.
+   - **Watchdog:** every 0.5 s during a race it samples the frame. If the frame has been one flat colour for 1.5 s, it hard-resets the canvas.
+4. **Stray autobahn signs.** Signs are no longer scattered by the deep-scenery and vegetation passes. Any sign further than 3 road widths from the road edge is skipped when drawn.
+5. **Five new demo shots:**
+
+   | # | Name | Camera |
+   |---|---|---|
+   | 146 | Cockpit ride | First-person camera; the machine is hidden. |
+   | 147 | Heli follow | High, trailing chase camera. |
+   | 148 | Drone weave | A low camera that sweeps from side to side. |
+   | 149 | Crane dive | Drops from high above to road level. |
+   | 150 | Bank rider | Rolls with the track banking and the loops. |
