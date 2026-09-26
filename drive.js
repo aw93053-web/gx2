@@ -102,7 +102,8 @@ function _bumpImpact(T,st,now){
     for(let i=0;i<gps.length;i++){ const gp=gps[i];
       if(gp&&gp.vibrationActuator)gp.vibrationActuator.playEffect('dual-rumble',{duration:450,strongMagnitude:0.8,weakMagnitude:0.6}); } }catch(e){}
   const msgs=['DEVASTATION!!','OBLITERATED!!','WRECKING BALL!!','TOTAL CARNAGE!!','BODY SLAM!!','SENT FLYING!!'];
-  showMsg('⚡⚡ '+msgs[~~(Math.random()*msgs.length)]+' ⚡⚡');
+  /* The shout rides in the white t-logo bump card now (updateHudDom). */
+  dm._bumpCard.shout=msgs[~~(Math.random()*msgs.length)];
 }
 var _bumpCooldown=0;  // timestamp: next bump allowed
 var _bumpGlowL=0;     // left edge glow strength (0..1)
@@ -5142,6 +5143,50 @@ function _buildTrackImpl(seed){
       segments[k].zigzag=true;segments[k].zigzagBrake=true;  // decel push, no speed cap
     }
   };
+  /* ═══ LOOP-BACK CROSSOVER (request 5 item 3). The old underpass was a dip
+     in the road with nothing crossing it. This builds a real one: the road
+     runs straight, sweeps through 270 degrees and comes back ACROSS its own
+     approach. The self-crossing pass below turns that into a bridge: the
+     later pass is lifted over the earlier one and a deck is drawn across the
+     approach, so from far down the straight the player sees the road they
+     are about to be on passing overhead — then drives the loop and crosses
+     back over the road they just used. Curvature 3.6 over ~327 segments is
+     a 270-degree turn of radius ~69 segments, which puts the crossing about
+     70 segments into the approach and 70 into the exit, ~465 segments apart
+     along the road (the pass needs 380). */
+  const mkCrossLoop=()=>{
+    /* Emitted segment by segment, not through addRoad: the build wraps
+       addRoad with length and curvature scaling, which turned the planned
+       270-degree sweep into ~130 degrees and the exit never met the
+       approach. */
+    const a=segments.length, dir=sign, C=3.6*dir;
+    const y0=a?segments[a-1].p2.world.y:0;
+    for(let n=0;n<150;n++)addSegment(0,y0);
+    for(let n=0;n<20;n++)addSegment(C*(n+0.5)/20,y0);
+    for(let n=0;n<307;n++)addSegment(C,y0);
+    for(let n=0;n<20;n++)addSegment(C*(1-(n+0.5)/20),y0);
+    _bankSpan(a+150,segments.length,dir,Math.max(0.7,_bankAmt));   // banked like a speedway loop
+    for(let n=0;n<330;n++)addSegment(0,y0);
+    for(let k=a;k<segments.length;k++)if(segments[k]){ segments[k].crossLoop=true; segments[k]._clc=segments[k].curve||0; }
+  };
+  /* ═══ LOOP-DE-LOOP (request 5 item 5). A boosted run-up, a steep climb, an
+     inverted crest and a dive, with the view turning a full 360 degrees
+     through it (seg.loopRoll, applied in the render). A pseudo-3D road
+     cannot pitch over, but rolling the frame through the climb and dive
+     reads as going round the loop. */
+  const mkLoopDeLoop=()=>{
+    const a=segments.length;
+    addRoad(12,56,8,0,0);
+    const b=segments.length;
+    addRoad(10,34,8,0, 3.4*hillAmp);
+    addRoad(6,26,6,0,0);
+    addRoad(8,34,10,0,-3.4*hillAmp);
+    const e=segments.length;
+    addRoad(8,40,8,0,0);
+    for(let k=a;k<b;k++)if(segments[k]){ segments[k].rush=Math.max(segments[k].rush||1,1.18); if((k-a)%9===0)segments[k].boost=true; }
+    for(let k=b;k<e;k++)if(segments[k]){ const t=(k-b)/Math.max(1,e-b);
+      const u=Math.max(0,Math.min(1,(t-0.12)/0.76)); segments[k].loopRoll=Math.PI*2*(u*u*(3-2*u)); segments[k].loopDeLoop=true; segments[k].rush=Math.max(segments[k].rush||1,1.22); }
+  };
   const mkVerticalLoop=()=>{
     const a=segments.length;
     const dir=rng()<0.5?1:-1;
@@ -5319,7 +5364,7 @@ function _buildTrackImpl(seed){
     plateaurun:_mkTerrace(5),           valleyrun:_mkSweep(1,6,1.5,-1.8),
     hyperlane:mkHyperLane, bottleneck:mkBottleneck,
     verticalloop:mkVerticalLoop,
-    bridge:mkBridge, underpass:mkUnderpass,
+    bridge:mkBridge, underpass:mkCrossLoop, crossloop:mkCrossLoop, loopdeloop:mkLoopDeLoop,
     megaelevation:mkMegaElevation,
     rainbowroad:mkRainbowRoad, turbotornado:mkTurboTornado,
     mirrorstraight:mkMirrorStraight, zigzagstorm:mkZigzagStorm,
@@ -5372,7 +5417,7 @@ function _buildTrackImpl(seed){
                'multideck','split','twist','airgap','junction','wallride',
                'bridge','underpass','megaelevation','rainbowroad','turbotornado','zigzagstorm',
                'skyramp','plates','gravitywell','boostchain',
-               'verticalloop','hyperlane','bottleneck',
+               'verticalloop','hyperlane','bottleneck','crossloop','loopdeloop',
                'sweeparc','flowchain','openrun','downhillblast','crestsweep',
                'cliffdrop','rollerwave','spiralstair','blindsnap','slingshot',
                'bankedoval','skyhighway','icerink','dirtrally'];
@@ -5397,6 +5442,8 @@ function _buildTrackImpl(seed){
     _palette.push('sideways');
   /* ENGINE-ENABLED TYPES: the edit tile's odds can force them into the palette. */
   if(rng()<_AO('_skyHighwayOdds',0.18)&&_palette.indexOf('skyhighway')<0)_palette.push('skyhighway');
+  if(rng()<_AO('_crossLoopOdds',0.35)&&_palette.indexOf('crossloop')<0)_palette.push('crossloop');
+  if(rng()<_AO('_loopOdds',0.25)&&_palette.indexOf('loopdeloop')<0)_palette.push('loopdeloop');
   if(rng()<_AO('_bankOdds',0.30)*0.6&&_palette.indexOf('bankedoval')<0)_palette.push('bankedoval');
   /* _forceFeat: a list of feature types that MUST be on this track (World
      Tour signatures and legends use it to guarantee their identity). */
@@ -5421,6 +5468,7 @@ function _buildTrackImpl(seed){
     corkscrew:[3,'spectacle'], pipe:[3,'spectacle'], figure8:[4,'spectacle'],
     twist:[3,'spectacle'], multideck:[3,'spectacle'], skyramp:[3,'spectacle'],
     airgap:[6,'spectacle'], gravitywell:[3,'spectacle'], verticalloop:[3,'spectacle'],
+    crossloop:[1,'structure'], loopdeloop:[1,'spectacle'],
     hyperlane:[3,'structure'], bottleneck:[5,'technical'],
     // structure — big geometry, readable from a distance
     flyover:[5,'structure'],
@@ -8097,6 +8145,8 @@ function _buildTrackImpl(seed){
     tally('banked',    g=>g.bank&&Math.abs(g.bank)>0.2);
     tally('skyhighway',g=>g.voidDeck);
     tally('offcamber', g=>g.offCamber);
+    tally('loopdeloop',g=>g.loopDeLoop);
+    tally('crossloop', g=>g.crossLoop&&g._xOver);
     for(const _sm of Object.keys(SURFACES))tally('surf_'+_sm,g=>g.surf===_sm);
     if(segments._extremeElev)F.extremeElev=1;
     if(segments._absurd)F['absurd_'+String(segments._absurd).toLowerCase()]=1;
@@ -8477,24 +8527,43 @@ function _buildTrackImpl(seed){
                              passing beneath, on both sides of the road.
        Up to 5 per track, on roughly 1 in 12 tracks with self-crossings. The
        plan is rebuilt from the curvature exactly as the minimap does it. */
-    if(dm.demo||H((seed>>>0)+0x7e11)%1000<Math.round(_AO('_xOdds',0.66)*1000)){   // Super Racing: Mechanics; the attract demo always shows them   // ~1 in 10 tracks end up with one (only tracks with usable self-crossings can)
+    /* LOOP-BACK GEOMETRY IS RE-ASSERTED HERE. Corner-shaping passes between
+       the emitter and this point rescale curvature track-wide (one seed's
+       270-degree sweep came out at 119), so the exit never met the approach
+       and no bridge was built. Each loop-back's arc is scaled back to exactly
+       270 degrees and its approach and exit straightened. */
+    for(let i=0;i<N;i++){ const g=segments[i]; if(g&&g.crossLoop&&g._clc!=null)g.curve=g._clc; }
+    { let c=0; for(let i=1;i<N;i++)if(segments[i].crossLoop&&!segments[i-1].crossLoop)c++; segments._clN=c; }
+    if(dm.demo||segments.some(g=>g&&g.crossLoop)||H((seed>>>0)+0x7e11)%1000<Math.round(_AO('_xOdds',0.66)*1000)){   // Super Racing: Mechanics; the attract demo always shows them   // ~1 in 10 tracks end up with one (only tracks with usable self-crossings can)
       const n=N, px=new Float32Array(n), py=new Float32Array(n), hd=new Float32Array(n);
       { let x=0,y=0,h=0; for(let i=0;i<n;i++){ h+=(segments[i].curve||0)*0.004; x+=Math.sin(h); y-=Math.cos(h); px[i]=x; py[i]=y; hd[i]=h; } }
       const CELL=8, grid=new Map(), key=(gx,gy)=>gx*73856093^gy*19349663;
       for(let i=0;i<n;i+=2){ const k=key(Math.floor(px[i]/CELL),Math.floor(py[i]/CELL)); let a=grid.get(k); if(!a)grid.set(k,a=[]); a.push(i); }
       const hard=(i)=>{ const g=segments[i]; return !g||g.tunnel||g.tube||g.loop||g.bridge||g.underpass||g.gap||g.ramp||g._fork||g.wallride; };   // structural conflicts only
       const RAMP=Math.round(110*Math.max(0.6,_AO('_xRamp',1))), CLEAR=4200*Math.max(0.7,_AO('_xClear',1)), used=[], pairs=[], XMAX=Math.max(1,Math.round(_AO('_xMax',3)));
-      for(let j=RAMP+50;j<n-RAMP-50&&pairs.length<XMAX;j+=2){
+      /* Loop-back crossovers are visited first so natural self-crossings
+         earlier on the lap cannot use up the crossing budget before them. */
+      const _jOrd=[];
+      for(let j=RAMP+50;j<n-RAMP-50;j+=2)if(segments[j].crossLoop)_jOrd.push(j);
+      for(let j=RAMP+50;j<n-RAMP-50;j+=2)if(!segments[j].crossLoop)_jOrd.push(j);
+      for(let _jo=0;_jo<_jOrd.length&&pairs.length<XMAX+(segments._clN|0);_jo++){
+        const j=_jOrd[_jo];
         const gx=Math.floor(px[j]/CELL), gy=Math.floor(py[j]/CELL);
         let best=-1,bd=1e9;
         for(let dx=-1;dx<=1;dx++)for(let dy=-1;dy<=1;dy++){ const arr=grid.get(key(gx+dx,gy+dy)); if(!arr)continue;
-          for(const i of arr){ if(Math.abs(i-j)<RAMP*2+160)continue; const d=Math.hypot(px[i]-px[j],py[i]-py[j]); if(d<bd){bd=d;best=i;} } }
+          for(const i of arr){ if(Math.abs(i-j)<RAMP*2+160)continue; if(segments[j].crossLoop&&!segments[i].crossLoop)continue; const d=Math.hypot(px[i]-px[j],py[i]-py[j]); if(d<bd){bd=d;best=i;} } }
         if(best<0||bd>11)continue;
         const i=best; let ang=Math.abs(((hd[j]-hd[i])%Math.PI+Math.PI)%Math.PI); ang=Math.min(ang,Math.PI-ang);
         if(ang<0.26)continue;                                   // running parallel, not crossing
         const lo=Math.min(i,j), up=Math.max(i,j);                // the LATER pass goes over
         if(used.some(r=>Math.abs(r-lo)<RAMP*2+40||Math.abs(r-up)<RAMP*2+40))continue;
-        let bad=false; for(let q=up-RAMP;q<=up+RAMP&&!bad;q++)if(hard(q))bad=true;
+        /* A loop-back crossover gets a longer ramp and a larger height
+           budget: it is built to cross, so it must not be skipped because
+           the surrounding terrain happens to fall away. */
+        const _isCL=!!(segments[lo].crossLoop&&segments[up].crossLoop);
+        const R=_isCL?200:RAMP;
+        if(up+R>=n-2)continue;
+        let bad=false; for(let q=up-R;q<=up+R&&!bad;q++)if(hard(q))bad=true;
         for(let q=lo-12;q<=lo+12&&!bad;q++)if(hard(q))bad=true;
         if(bad)continue;
         const yLo=segments[lo].p1.world.y, yUp=segments[up].p1.world.y;
@@ -8506,10 +8575,10 @@ function _buildTrackImpl(seed){
         let need=0;
         const _hiX=Math.max(9000,CLEAR+3000);
         if(diff<CLEAR)need=CLEAR-diff; else if(diff>_hiX)need=(_hiX-2000)-diff;
-        if(Math.abs(need)>16000)continue;
+        if(Math.abs(need)>(_isCL?40000:16000))continue;
         const sm=(x)=>x<=0?0:x>=1?1:x*x*(3-2*x);
-        if(need!==0)for(let q=up-RAMP;q<=up+RAMP;q++){
-          const g=segments[q], k1=sm((q-(up-RAMP))/RAMP)*sm(((up+RAMP)-q)/RAMP), k2=sm((q+1-(up-RAMP))/RAMP)*sm(((up+RAMP)-q-1)/RAMP);
+        if(need!==0)for(let q=up-R;q<=up+R;q++){
+          const g=segments[q], k1=sm((q-(up-R))/R)*sm(((up+R)-q)/R), k2=sm((q+1-(up-R))/R)*sm(((up+R)-q-1)/R);
           g.p1.world.y+=need*k1; g.p2.world.y+=need*k2;
         }
         const hDeck=(segments[up].p1.world.y-segments[lo].p1.world.y)/ROAD_WIDTH;
@@ -11588,6 +11657,18 @@ function _shotGuard(o,p,idx,u){
 /* The one pose function for an attract shot at slot time u (0..1). The
    renderer and DriveMode.lintShots() both call it, so what the linter
    checks is exactly what is drawn. */
+let _CALM=null;
+function _calmShots(){
+  if(_CALM)return _CALM;
+  _CALM=[];
+  for(let i=0;i<_DEMO_SHOTS.length;i++){
+    let ok=true;
+    for(let f=0;f<=40&&ok;f++){ const o=_shotPose(i,f/40);
+      if(!o||Math.abs(o[4])>0.08||o[2]>0.6||o[2]<-0.3||Math.abs(o[3])>0.25||o[1]>1.7||o[1]<0.8||Math.abs(o[5])>20)ok=false; }
+    if(ok)_CALM.push(i);
+  }
+  return _CALM;
+}
 function _shotPose(idx,u){
   const rate=_DEMO_RATE[idx]||1;
   const p=Math.min(1,Math.max(0,u)*rate);
@@ -12105,11 +12186,12 @@ const _DEMO_SHOTS=[
   function(p){ const e=_sEase(p);
     return [0.10*e, 1+0.30*e, 0.12*e, 0.10*e, p*Math.PI*2*e, 6*e, 0]; },
 
-  /* 116 INVERTED HANG — camera rises overhead then rolls fully upside down,
-        looking back down at the machine from an impossible vantage. */
+  /* 116 HIGH DUTCH (was INVERTED HANG) — rises overhead with a gentle
+        tilt. The full upside-down roll, caught mid-way, read as a broken
+        camera: the frame sat 40° off with the road seen from above. */
   function(p){ const e=_sEase(p), k=_sStep(p);
-    return [0.20*e, 1+0.45*e, (0.4+1.5*k)*e, (0.30+0.35*k)*e,
-            Math.PI*k*e, 4*e, 0]; },
+    return [0.20*e, 1+0.25*e, (0.4+0.9*k)*e, (0.22+0.18*k)*e,
+            0.14*k*e, 4*e, 0]; },
 
   /* 117 CORKSCREW ORBIT — yaw sweeps a full half-circle while roll follows
         at half rate and lift rises, tracing a helix around the car. */
@@ -12358,8 +12440,18 @@ function _renderWorldImpl(vw,vh,camPan){
        at the display rate — a judder on every 120/144 Hz screen. The shot is
        sampled at the same sub-tick instant the bodies are drawn at. */
     const _clk=_demoClock+Math.max(0,Math.min(1,dm._alpha||0))*STEP;
-    const _sh=_pin?(((_pin.idx|0)%_DEMO_SHOTS.length)+_DEMO_SHOTS.length)%_DEMO_SHOTS.length
+    /* ═══ A NEW TRACK OPENS ON A CALM SHOT (request 5 item 2). A track runs
+       for three shot slots and the index is a global clock, so a freshly
+       loaded track could open mid-way through an extreme shot — rolled 40°
+       and looking down from overhead, which read as the track loading
+       "zoomed in and diagonal". The first slot of every track now plays an
+       establishing shot: no roll, modest lift, pitch and zoom. */
+    let _sh=_pin?(((_pin.idx|0)%_DEMO_SHOTS.length)+_DEMO_SHOTS.length)%_DEMO_SHOTS.length
                   :Math.floor(_clk/7)%_DEMO_SHOTS.length;
+    if(!_pin&&Math.floor(_clk/7)%3===0){
+      const _op=_calmShots();
+      if(_op.length)_sh=_op[Math.floor(_clk/21)%_op.length];
+    }
     /* ═══ TRACK CHANGES ON SHOT BOUNDARIES (plan item 10)
        The shell used to change demo track on a wall-clock 21 s interval
        while shots run on this physics clock; any dropped frame made the two
@@ -16572,14 +16664,23 @@ function drawProp(sp,vw,vh){
   if(spr.veg==='tree'){
     // animated tree: swaying layered canopy over a trunk (city-map style)
     const sway=_propCaching?0:Math.sin(now/700+spr.ph)*w*0.07;
+    const _tf0=(spr.tf|0)%12;
+    const _palmT=(_tf0===2);
     ctx.fillStyle=hsl(28,40,isNight()?14:24);
     // Trunk widened — 0.10 read as a hairline against a full canopy.
     // Slight taper (narrower at the top) reads more like real bark.
-    const _tbW=w*0.17;
+    // (request 5 item 4) Two-tone: the lit left half is a shade lighter.
+    const _tbW=w*(_palmT?0.11:(_tf0===10?0.13:0.17));
+    const _tTop=y0-h*(_palmT?0.80:(_tf0===10?0.70:0.46));
+    const _tLean=_palmT?w*0.18*(((spr.ph*10)|0)%2?1:-1):0;
     ctx.beginPath();
     ctx.moveTo(bx-_tbW*0.5,y0);ctx.lineTo(bx+_tbW*0.5,y0);
-    ctx.lineTo(bx+_tbW*0.30,y0-h*0.46);ctx.lineTo(bx-_tbW*0.30,y0-h*0.46);
+    ctx.quadraticCurveTo(bx+_tbW*0.4+_tLean*0.2,(y0+_tTop)/2,bx+_tbW*0.30+_tLean,_tTop);ctx.lineTo(bx-_tbW*0.30+_tLean,_tTop);
+    ctx.quadraticCurveTo(bx-_tbW*0.4+_tLean*0.2,(y0+_tTop)/2,bx-_tbW*0.5,y0);
     ctx.closePath();ctx.fill();
+    if(h>30){ ctx.fillStyle=hsl(30,36,isNight()?19:34);
+      ctx.beginPath();ctx.moveTo(bx-_tbW*0.5,y0);ctx.lineTo(bx-_tbW*0.05,y0);
+      ctx.lineTo(bx-_tbW*0.03+_tLean,_tTop);ctx.lineTo(bx-_tbW*0.30+_tLean,_tTop);ctx.closePath();ctx.fill(); }
     // hueAbs (patch plants) wins over the theme hue + per-prop jitter
     const _vz=zoneAt(P?P.z:0);
     const lush=_vz?(0.45+_vz.vegDens*0.85):1;
@@ -16611,6 +16712,63 @@ function drawProp(sp,vw,vh){
     // than hovering over it. One ellipse per plant.
     ctx.fillStyle='rgba(0,0,0,'+(isNight()?0.20:0.28)+')';
     ctx.beginPath();ctx.ellipse(bx,y0,w*0.42,w*0.11,0,0,Math.PI*2);ctx.fill();
+    /* ═══ SILHOUETTES WITH SHADING (request 5 item 4). Every form used to be
+       the same stack of ellipse lobes, so conifers, palms and acacias all
+       read as one grey blob. Light comes from the upper left: each shape is
+       drawn as a shaded body plus a lit left face, with a darker terminator
+       underneath. */
+    const _cx=bx+sway*0.6+lean*0.5;
+    const _lit=(k)=>hsl(vHue+6,sat,Math.min(80,lit0*k)*nm3);
+    if(tf===1||tf===7||tf===8){
+      // CONIFER / CYPRESS / PAGODA: stacked tiers, each split into a lit and
+      // a shaded half down the centre line.
+      const tiers=tf===7?3:(tf===8?5:4), topY=y0-h*(tf===7?1.02:0.98), baseY=y0-h*(tf===8?0.30:0.22);
+      const halfW=w*(tf===7?0.24:(tf===8?0.62:0.52))*(0.85+bushy*0.3);
+      for(let T=0;T<tiers;T++){
+        const f0=T/tiers, f1=(T+1)/tiers;
+        const yb=baseY+(topY-baseY)*f0*0.92, yt=baseY+(topY-baseY)*Math.min(1,f1+0.18);
+        const hw=halfW*(1-f0*0.72), sx=sway*(0.3+f1*0.7);
+        ctx.fillStyle=hsl(vHue,sat*0.9,lit0*0.62*nm3);
+        ctx.beginPath();ctx.moveTo(_cx+sx,yt);ctx.lineTo(_cx+sx+hw,yb);ctx.lineTo(_cx+sx-hw,yb);ctx.closePath();ctx.fill();
+        ctx.fillStyle=_lit(1.18);
+        ctx.beginPath();ctx.moveTo(_cx+sx,yt);ctx.lineTo(_cx+sx,yb);ctx.lineTo(_cx+sx-hw,yb);ctx.closePath();ctx.fill();
+        if(h>50){ ctx.fillStyle=hsl(vHue,sat*0.8,lit0*0.35*nm3);
+          ctx.fillRect(_cx+sx-hw,yb-Math.max(1,h*0.012),hw*2,Math.max(1,h*0.012)); }
+      }
+    } else if(tf===2){
+      // PALM: a crown of arched fronds from the top of a curved trunk.
+      const tx=bx+_tLean+sway, ty=_tTop, n=h<40?5:7;
+      ctx.lineCap='round';
+      for(let q=0;q<n;q++){
+        const a=-Math.PI+q*(Math.PI/(n-1)), L=w*(0.62+((q*37+((spr.ph*50)|0))%10)/40);
+        const ex=tx+Math.cos(a)*L, ey=ty+Math.sin(a)*L*0.35+L*0.38;
+        ctx.strokeStyle=(Math.cos(a)<0)?_lit(1.15):hsl(vHue,sat*0.9,lit0*0.62*nm3);
+        ctx.lineWidth=Math.max(1.5,w*0.11);
+        ctx.beginPath();ctx.moveTo(tx,ty);ctx.quadraticCurveTo(tx+Math.cos(a)*L*0.6,ty-L*0.30,ex,ey);ctx.stroke();
+      }
+      ctx.fillStyle=hsl(30,50,22*nm3);ctx.beginPath();ctx.arc(tx,ty,Math.max(1,w*0.07),0,Math.PI*2);ctx.fill();
+    } else if(tf===10){
+      // BARE: forked branches, no canopy.
+      ctx.strokeStyle=hsl(28,30,(isNight()?16:30));ctx.lineCap='round';
+      const br=(x,y,ang,len,d)=>{ if(d>3||len<1.5)return; const x2=x+Math.cos(ang)*len, y2=y+Math.sin(ang)*len;
+        ctx.lineWidth=Math.max(1,w*0.07*(1-d*0.25)); ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x2,y2);ctx.stroke();
+        br(x2,y2,ang-0.5,len*0.68,d+1); br(x2,y2,ang+0.45,len*0.64,d+1); };
+      br(bx+sway*0.3,_tTop,-Math.PI/2-0.35,h*0.22,0); br(bx+sway*0.3,_tTop,-Math.PI/2+0.4,h*0.2,0);
+    } else if(tf===6||tf===9){
+      // ACACIA / BANYAN: one flat, wide crown with a shaded underside band.
+      const cw=w*(tf===6?0.95:1.05)*(0.85+bushy*0.3), ch=h*(tf===6?0.16:0.26), cy=y0-h*(tf===6?0.72:0.62);
+      ctx.fillStyle=hsl(vHue,sat*0.85,lit0*0.50*nm3);
+      ctx.beginPath();ctx.ellipse(_cx,cy+ch*0.25,cw,ch,0,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle=_lit(1.0);
+      ctx.beginPath();ctx.ellipse(_cx-cw*0.06,cy-ch*0.12,cw*0.94,ch*0.78,0,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle=_lit(1.30);
+      ctx.beginPath();ctx.ellipse(_cx-cw*0.35,cy-ch*0.35,cw*0.40,ch*0.36,0,0,Math.PI*2);ctx.fill();
+    }
+    if(tf===1||tf===7||tf===8||tf===2||tf===10||tf===6||tf===9){
+      if(isNight()){ctx.fillStyle='rgba(140,255,190,0.08)';
+        ctx.beginPath();ctx.ellipse(bx+sway,y0-h*0.62,w*0.5,h*0.3,0,0,Math.PI*2);ctx.fill();}
+      ctx.restore(); return;
+    }
     // Underside shadow mass first — everything lit is drawn over it.
     ctx.fillStyle=hsl(vHue,sat*0.8,(lit0*0.45)*nm3);
     ctx.beginPath();
@@ -16635,6 +16793,18 @@ function drawProp(sp,vw,vh){
                     Math.max(1,lw*0.66),Math.max(1,lh*0.72),0,0,Math.PI*2);
         ctx.fill();
       }
+    }
+    // Lit crown: a soft highlight up and to the left, a dark terminator low
+    // on the right, so the mass reads as a rounded volume.
+    if(h>24){
+      ctx.fillStyle=hsl(vHue+10,sat*0.9,Math.min(82,lit0*1.55)*nm3);
+      ctx.globalAlpha*=0.55;
+      ctx.beginPath();ctx.ellipse(bx+sway*0.8-w*0.16,y0-h*0.74,w*0.20*TF.tap,h*0.10,-0.5,0,Math.PI*2);ctx.fill();
+      ctx.globalAlpha/=0.55;
+      ctx.fillStyle=hsl(vHue,sat*0.8,lit0*0.40*nm3);
+      ctx.globalAlpha*=0.45;
+      ctx.beginPath();ctx.ellipse(bx+sway*0.4+w*0.14,y0-h*0.40,w*0.30*TF.tap,h*0.09,0.3,0,Math.PI*2);ctx.fill();
+      ctx.globalAlpha/=0.45;
     }
     if(isNight()){ctx.fillStyle='rgba(140,255,190,0.10)';
       ctx.beginPath();ctx.ellipse(bx+sway,y0-h*0.62,w*0.5,h*0.3,0,0,Math.PI*2);ctx.fill();}
@@ -18508,6 +18678,7 @@ function updateHudDom(vw,vh){
         card._key=key;
         const gained=bc.placeAfter?bc.placeBefore-bc.placeAfter:0;
         card.innerHTML=
+          (bc.shout?'<div class="zs-bc-shout">'+_tlogo(bc.shout,'zs-bc-s')+'</div>':'')+
           '<div class="zs-bc-head">'+_tlogo('BUMP LANDED'+(bc.range>2?' \u00b7 '+bc.range+' SEG STRIKE':''),'zs-bc-h')+'</div>'+
           '<div class="zs-bc-row"><i style="background:'+bc.col+'"></i>'+_tlogo(String(bc.name).slice(0,10))+
             _tlogo('SPEED '+bc.rivalSpeed+'%')+_tlogo('STUNNED '+bc.stun.toFixed(1)+'s')+_tlogo('SHIELD '+bc.rivalShield+'%')+'</div>'+
@@ -20556,6 +20727,14 @@ function frame(ms){
             briefly drives on the side of the screen. Read from the segment
             under the car and smoothed so it eases rather than steps. */
     let _roll=(race.attract?(dm._orbitRoll||0):0)||(dm._turboRoll?(dm._orbitRoll||0):0)||((_camMode===5||dm._bumpCamOrbit)?(dm._orbitRoll||0):0);
+    /* LOOP-DE-LOOP: the frame turns through 360 degrees across the loop,
+       interpolated within the segment so there is no smoothing to unwind
+       at the 2pi -> 0 seam. */
+    if(!_roll&&P){
+      const _lz=(P._rz!==undefined)?P._rz:P.z, _l1=seg(_lz);
+      if(_l1&&_l1.loopRoll!=null){ const _l2=seg(_lz+SEG_LEN), f=(_lz%SEG_LEN)/SEG_LEN;
+        const r2=(_l2&&_l2.loopRoll!=null)?_l2.loopRoll:Math.PI*2; _roll=_l1.loopRoll+(r2-_l1.loopRoll)*f; }
+    }
     if(!_roll&&P&&!race.attract){
       const _swSeg=seg(P.z);
       const _swTgt=(_swSeg&&_swSeg.sidewaysRoll)?_swSeg.sidewaysRoll:0;
@@ -21885,7 +22064,9 @@ function srResetRow(){
 }
 function srResetTab(){ const keep=srEditRow; for(let i=0;i<srEditRows().length;i++){ srEditRow=i; srResetRow(); } srEditRow=keep; }
 function srEditRows(){ return SR_TABS[srTab%SR_TABS.length].rows(); }
-const _SR_NAMES={_trackLength:'LENGTH',_lapsOverride:'LAPS',_rivalCount:'RIVALS'};
+const _SR_NAMES={_trackLength:'LENGTH',_lapsOverride:'LAPS',_rivalCount:'RIVALS',
+  _feat_loopdeloop:'LOOP-DE-LOOP',_feat_crossloop:'LOOP-BACK CROSSOVER',_loopOdds:'LOOP-DE-LOOP CHANCE',_crossLoopOdds:'CROSSOVER CHANCE',
+  _feat_verticalloop:'PLUNGE TUBE',_feat_underpass:'UNDERPASS (LOOP-BACK)'};
 function srLabel(k){
   if(_SR_NAMES[k])return _SR_NAMES[k];
   return k.replace(/^_feat_/,'').replace(/^_/,'').replace(/Odds$/,'').replace(/([a-z])([A-Z])/g,'$1 $2').toUpperCase();
@@ -22665,6 +22846,8 @@ window.DriveMode={start,exit,get active(){return dm.active;},
      through the same guard and envelope the renderer applies, and report
      per-axis ranges, non-finite values and the largest single-frame jump
      (a cut is only allowed at the slot boundary). */
+  calmShots:()=>_calmShots().slice(),
+  shotPose:(i,u)=>{ try{ return _shotPose(i,u); }catch(e){ return null; } },
   lintShots:()=>{
     const AX=['yaw','zoom','lift','pitch','roll','ztrav','xoff'];
     const rng={}; AX.forEach(a=>rng[a]=[Infinity,-Infinity]);
@@ -23269,6 +23452,8 @@ const ALGO_PARAMS=[
   /* ═══ FEATURE KINDS THE GENERATOR HAD BUT THE MENU NEVER EXPOSED
      (request 3 item 6). Every kind below is in _FEAT_META and placed by the
      director; now each has its own count, 0 = never. */
+  {k:'_feat_crossloop',    sec:'Features', min:0,max:4, step:1, desc:'Loop-back crossovers per track: the road sweeps 270 degrees and crosses its own approach on a bridge', def:1},
+  {k:'_feat_loopdeloop',   sec:'Features', min:0,max:4, step:1, desc:'Loop-de-loops per track: climb, go over the top upside down, dive', def:1},
   {k:'_feat_skyramp',      sec:'Features', min:0,max:5, step:1, desc:'Sky-ramp launches per track', def:2},
   {k:'_feat_gravitywell',  sec:'Features', min:0,max:5, step:1, desc:'Gravity-well dips per track', def:2},
   {k:'_feat_sweeparc',     sec:'Features', min:0,max:8, step:1, desc:'Long sweeping arcs per track', def:4},
@@ -23310,6 +23495,8 @@ const ALGO_PARAMS=[
   {k:'_bankAmount',     sec:'Engine', min:0,max:1.2, step:0.05, desc:'Bank steepness: 0 flat, 1.2 near-vertical wall', def:0.75},
   {k:'_surfaceOdds',    sec:'Engine', min:0,max:1,   step:0.05, desc:'Chance the track lays biome surfaces (ice, sand, dirt, grass, lava, metal)', def:0.45},
   {k:'_surfaceShare',   sec:'Engine', min:0,max:0.6, step:0.02, desc:'Share of the lap on a special surface', def:0.16},
+  {k:'_loopOdds',       sec:'Engine', min:0,max:1,   step:0.05, desc:'Chance the track includes a LOOP-DE-LOOP', def:0.25},
+  {k:'_crossLoopOdds',  sec:'Engine', min:0,max:1,   step:0.05, desc:'Chance the track includes a LOOP-BACK CROSSOVER (under, round, then over)', def:0.35},
   {k:'_skyHighwayOdds', sec:'Engine', min:0,max:1,   step:0.05, desc:'Chance of a SKY HIGHWAY: road floating over open sky', def:0.18},
   {k:'_feat_bankedoval',sec:'Engine', min:0,max:6,   step:1,    desc:'Banked-oval sections per track', def:2},
   {k:'_feat_skyhighway',sec:'Engine', min:0,max:6,   step:1,    desc:'Sky-highway sections per track', def:2},

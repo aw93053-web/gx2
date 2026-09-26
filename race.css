@@ -841,3 +841,14 @@ body.zs-sr-water #zs-waterfx.zs-nofluid{display:block!important}
 #zs-hudfx #zs-bumpcard .zs-bc-h{font-size:clamp(17px,2.3vw,36px)!important}
 #zs-bumpcard{max-width:62vw;padding:.8vh 1.6vw 1vh}
 .zs-bc-row{gap:1vw}
+/* White t-logo for the bump card (request 5 item 1): same face, stroke and
+   drop shadow as the logo, with a white/steel gradient instead of fire. */
+#zs-bumpcard .t-logo{background:linear-gradient(180deg,#ffffff,#dfe9f3,#ffffff,#b9c6d3,#ffffff)!important;background-size:100% 400%!important;
+  -webkit-background-clip:text!important;background-clip:text!important;-webkit-text-fill-color:transparent!important;
+  -webkit-text-stroke:1px #0008!important;filter:none!important;text-shadow:0 3px 10px #000c!important}
+#zs-bumpcard .t-logo::after{background:linear-gradient(180deg,#fff,#eef4fa,#fff)!important;background-size:100% 400%!important;
+  -webkit-background-clip:text!important;background-clip:text!important}
+#zs-bumpcard{border-color:#ffffff88;box-shadow:0 0 30px #ffffff33,inset 0 0 18px #ffffff14}
+#zs-hudfx #zs-bumpcard .zs-bc-s{font-size:clamp(20px,3vw,48px)!important}
+.zs-bc-shout{animation:zs-shout .5s cubic-bezier(.2,1.6,.4,1) both}
+@keyframes zs-shout{from{transform:scale(2.2);opacity:0}to{transform:scale(1);opacity:1}}

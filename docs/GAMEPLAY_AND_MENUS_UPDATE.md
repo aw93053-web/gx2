@@ -167,3 +167,33 @@ Over 40 seeds, speedway banking appears on 30 tracks. The feature count and its 
 - Persisting lab edits across browsed tracks was considered and dropped. Edits belong to the track being tuned, and history browsing relies on that.
 - The wider ranges apply only to lab edits, so random tracks do not get more extreme.
 - Tunnel overrides are read only in races launched from Super Racing. World Tour clears the override set.
+
+---
+
+# Round 3
+
+1. **Bump hit text is white `t-logo`.** The BUMP LANDED card uses the logo face and stroke with a white/steel gradient instead of fire. The random shout ("BODY SLAM!!" and so on) was a plain toast; it now opens the card with a pop-in.
+2. **Track "loaded zoomed in and diagonal".**
+   - **Cause:** the attract demo changes track every three shots, while the shot index runs on a global clock. A new track could therefore open part-way through shot 116, "INVERTED HANG", which rises overhead and rolls upside down. Caught mid-roll, the frame sits about 38° off and looks down at a zoomed road, which matches the screenshot.
+   - **Fix:** the first shot of every demo track is now drawn from 26 calm establishing shots (no roll, modest lift, pitch and zoom). Shot 116 is now a gentle "HIGH DUTCH" tilt.
+   - **Check:** a sweep of all 146 shots finds no remaining rolled overhead pose.
+3. **Loop-back crossovers.** The old underpass was a dip with nothing crossing it. The new feature, which also replaces `underpass` in the palette, works like this:
+   - the road runs straight, sweeps a banked 270°, and comes back across its own approach;
+   - the self-crossing pass lifts the later pass onto a bridge on pillars, so the player sees the road they are about to take crossing overhead from far down the approach, then goes round and crosses back over the road they just used.
+
+   Three fixes were needed to make it build reliably:
+   - it is emitted segment by segment (the build's `addRoad` wrapper rescaled the sweep to ~130°);
+   - its curvature is re-asserted before the crossing pass;
+   - the crossing scan visits loop-backs first, and only pairs a loop with itself, so natural crossings can't use up the budget.
+4. **Trees:**
+   - Conifers, cypresses and pagodas are stacked tiers, each split into a lit and a shaded half.
+   - Palms have a curved trunk and arched fronds, lit on one side.
+   - Acacia and banyan have a flat, wide crown over a shaded band.
+   - Bare trees are forked branches.
+   - The round forms keep their lobes and gain an upper-left highlight and a lower-right terminator.
+   - Every trunk is two-tone.
+5. **Loop-de-loop.** A boosted run-up, a climb, an inverted crest and a dive, with the frame turning a full 360° through the loop, interpolated per segment so it never unwinds. Measured over 50 seeds, it appears on ~1 in 3 tracks.
+
+**Super Racing:**
+- FEATURES tab: counts for LOOP-DE-LOOP and LOOP-BACK CROSSOVER.
+- ENGINE tab: LOOP-DE-LOOP CHANCE and CROSSOVER CHANCE.
