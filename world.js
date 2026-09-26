@@ -737,6 +737,27 @@ function completeRace(settlementId,totalMs){
       newly.push(locked[k].id);
     }
   }
+  /* Every win opens something. When the municipality is already fully open,
+     the road continues into the next municipality of the same state (then
+     the next state of the country) that still has locked settlements. */
+  if(!newly.length){
+    try{
+      var stateId=muniId.slice(0,muniId.lastIndexOf('/'));
+      var ctryId=stateId.slice(0,stateId.lastIndexOf('/'));
+      var states=statesOf(ctryId), order=[];
+      var si=0; for(var a=0;a<states.length;a++)if(states[a].id===stateId)si=a;
+      for(var b=0;b<states.length;b++)order.push(states[(si+b)%states.length].id);
+      outer: for(var c=0;c<order.length;c++){
+        var ms=municipalitiesOf(order[c]), mi=0;
+        for(var d=0;d<ms.length;d++)if(ms[d].id===muniId)mi=d;
+        for(var e2=0;e2<ms.length;e2++){
+          var mm=ms[(mi+e2)%ms.length]; if(mm.id===muniId)continue;
+          var ss=settlementsOf(mm.id);
+          for(var f=0;f<ss.length;f++)if(!s.unlocked[ss[f].id]){ s.unlocked[ss[f].id]=1; newly.push(ss[f].id); break outer; }
+        }
+      }
+    }catch(err){}
+  }
   persist();
   return newly;
 }
@@ -2234,19 +2255,50 @@ function drawHud(ctx,vw,vh){
      than as unrelated corner text. */
   /* (9) "UNLOCKED X of 81,742" — a fraction of what exists, not of a
      weighting figure the world never contained. */
-  var stats='WON '+s.completed+'   \u00b7   UNLOCKED '+
+  /* ═══ ONE PROGRESS PLATE (request 3 item 3). WON / UNLOCKED on the first
+     row, the tour's passport, legends, streak and featured count on the
+     second, and the latest rumour on a third — one rectangle instead of a
+     second strip floating over the map. */
+  var stats='WON '+s.completed+'   ·   UNLOCKED '+
             s.unlocked.toLocaleString()+' of '+s.total.toLocaleString();
+  var S2=null; try{ S2=global.TourProgress?global.TourProgress.status():null; }catch(e){ S2=null; }
+  var row2=S2?('PASSPORT '+S2.stamps+'/'+S2.of+'   ·   LEGENDS '+S2.legends+'   ·   STREAK x'+S2.mult.toFixed(1)+'   ·   ★ '+S2.featured+' FEATURED TODAY'):'';
+  var row3=(S2&&S2.rumours&&S2.rumours.length)?('“'+S2.rumours[0].text+'”'):'';
   var sf=Math.max(10,Math.round(Math.min(vw,vh)*0.021));
-  ctx.font=sf+"px 'Germania One','Press Start 2P',serif";
+  var sf2=Math.max(9,Math.round(sf*0.78)), sf3=Math.max(8,Math.round(sf*0.66));
   ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.font=sf+"px 'Germania One','Press Start 2P',serif";
   var sw=ctx.measureText(stats).width;
-  var sbx=vw/2-sw/2-16, sbw=sw+32, sby=by+bh+6, sbh=sf*1.8;
+  ctx.font=sf2+"px 'Germania One','Press Start 2P',serif";
+  if(row2)sw=Math.max(sw,ctx.measureText(row2).width);
+  ctx.font=sf3+"px 'Press Start 2P',monospace";
+  if(row3){ while(row3.length>12&&ctx.measureText(row3).width>vw*0.8)row3=row3.slice(0,-2); sw=Math.max(sw,ctx.measureText(row3).width); }
+  var sbh=sf*1.8+(row2?sf2*1.6:0)+(row3?sf3*1.9:0);
+  var sbx=vw/2-sw/2-18, sbw=sw+36, sby=by+bh+6;
   ctx.fillStyle='rgba(3,14,24,0.80)';
   ctx.fillRect(sbx,sby,sbw,sbh);
   ctx.strokeStyle='rgba(120,240,150,0.55)';ctx.lineWidth=1.5;
   ctx.strokeRect(sbx,sby,sbw,sbh);
+  var ry=sby+sf*0.9;
+  ctx.font=sf+"px 'Germania One','Press Start 2P',serif";
   ctx.fillStyle='#9fd8b0';
-  ctx.fillText(stats,vw/2,sby+sbh/2);
+  ctx.fillText(stats,vw/2,ry);
+  if(row2){
+    ry+=sf*0.9+sf2*0.8;
+    ctx.strokeStyle='rgba(120,240,150,0.18)';ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(sbx+14,ry-sf2*0.8);ctx.lineTo(sbx+sbw-14,ry-sf2*0.8);ctx.stroke();
+    ctx.font=sf2+"px 'Germania One','Press Start 2P',serif";
+    ctx.fillStyle='#ffd23a';
+    ctx.fillText(row2,vw/2,ry);
+    ry+=sf2*0.8;
+  }
+  if(row3){
+    ry+=sf3*0.95;
+    ctx.font=sf3+"px 'Press Start 2P',monospace";
+    ctx.fillStyle='#7fd0ff';
+    ctx.fillText(row3,vw/2,ry);
+  }
+  var _plateBottom=sby+sbh;
   ctx.textBaseline='top';
 
   /* Selected settlement detail, bottom-left. */
@@ -2263,29 +2315,18 @@ function drawHud(ctx,vw,vh){
       (W.isCompleted(it.id)?'   \u2713 WON':(W.isUnlocked(it.id)?'':'   LOCKED')),116,vh-122);
   }
 
-  /* TOUR PROGRESSION: the municipality's tradition, and the passport strip. */
+  /* TOUR PROGRESSION: the municipality's tradition, under the progress plate. */
   try{
     var TPh=global.TourProgress;
-    if(TPh){
-      if(MapState.level==='muni'&&MapState.path.length){
-        var muniId=MapState.path[MapState.path.length-1].id, g=TPh.visitMuni(muniId);
-        if(g){
-          var by=Math.round(vh*0.13), txt2='TRADITION \u00b7 '+g.name+'  \u2014  '+g.desc;
-          ctx.font="10px 'Press Start 2P',monospace"; ctx.textAlign='center'; ctx.textBaseline='middle';
-          var bw2=ctx.measureText(txt2).width+30, pls=0.6+0.4*Math.sin(MapState._t*2.2);
-          ctx.fillStyle='rgba(0,8,16,0.82)'; ctx.fillRect(vw/2-bw2/2,by-13,bw2,26);
-          ctx.strokeStyle=g.col; ctx.globalAlpha=pls; ctx.lineWidth=2; ctx.strokeRect(vw/2-bw2/2,by-13,bw2,26); ctx.globalAlpha=1;
-          ctx.fillStyle=g.col; ctx.fillText(txt2,vw/2,by);
-        }
-      }
-      var S2=TPh.status();
-      var strip='PASSPORT '+S2.stamps+'/'+S2.of+'   LEGENDS '+S2.legends+'   STREAK x'+S2.mult.toFixed(1)+'   \u2605 '+S2.featured+' FEATURED TODAY';
-      ctx.font="8px 'Press Start 2P',monospace"; ctx.textAlign='left'; ctx.textBaseline='middle';
-      var sw2=ctx.measureText(strip).width+20, sy2=vh-200;   // above the selected-town details
-      ctx.fillStyle='rgba(0,8,16,0.78)'; ctx.fillRect(112,sy2-10,sw2,20);
-      ctx.fillStyle='#ffd23a'; ctx.fillText(strip,122,sy2);
-      if(S2.rumours&&S2.rumours.length){
-        ctx.fillStyle='#7fd0ff'; ctx.fillText('! '+S2.rumours[0].text,122,sy2-22);
+    if(TPh&&MapState.level==='muni'&&MapState.path.length){
+      var muniId=MapState.path[MapState.path.length-1].id, g=TPh.visitMuni(muniId);
+      if(g){
+        var tby=Math.round(_plateBottom+20), txt2='TRADITION · '+g.name+'  —  '+g.desc;
+        ctx.font="10px 'Press Start 2P',monospace"; ctx.textAlign='center'; ctx.textBaseline='middle';
+        var bw2=ctx.measureText(txt2).width+30, pls=0.6+0.4*Math.sin(MapState._t*2.2);
+        ctx.fillStyle='rgba(0,8,16,0.82)'; ctx.fillRect(vw/2-bw2/2,tby-13,bw2,26);
+        ctx.strokeStyle=g.col; ctx.globalAlpha=pls; ctx.lineWidth=2; ctx.strokeRect(vw/2-bw2/2,tby-13,bw2,26); ctx.globalAlpha=1;
+        ctx.fillStyle=g.col; ctx.fillText(txt2,vw/2,tby);
       }
     }
   }catch(e){}
@@ -2309,7 +2350,11 @@ global.WorldMap={
   },
   state:MapState, draw:draw, nav:nav, navDir:navDir, enter:enter, back:back, reset:resetMap,
   items:function(){return MapState.items;},
-  selected:function(){return MapState.items[MapState.sel];}
+  selected:function(){return MapState.items[MapState.sel];},
+  level:function(){return MapState.level;},
+  /* Screen position of an item on the current level, from the last draw. */
+  posOf:function(id){ for(var i=0;i<MapState.items.length;i++)if(MapState.items[i].id===id)return _navPos[i]||null; return null; },
+  selectId:function(id){ for(var i=0;i<MapState.items.length;i++)if(MapState.items[i].id===id){MapState.sel=i;return true;} return false; }
 };
 
 })(typeof window!=='undefined'?window:globalThis);
@@ -4575,6 +4620,13 @@ function watchResult(st){
     if(global.DriveMode.isActive&&global.DriveMode.isActive())return;
     clearInterval(_poll);_poll=null;
     Flow.mode='victory';Flow.t=0;Flow.dotAnim=0;Flow._recorded=false;
+    /* The engine's finish screen already offered A/X/B; honour the choice. */
+    var after=null; try{ after=global.ZS_tourAfter||null; global.ZS_tourAfter=null; }catch(e){}
+    if(after==='replay'){ Flow.t=1; victoryReplay(); }
+    else if(after==='title'){
+      Flow.t=1; victoryToTitle();
+      try{ if(global.closeWorldMap)global.closeWorldMap(); }catch(e){}
+    }
   },350);
 }
 
@@ -4757,9 +4809,9 @@ function drawVictory(ctx,vw,vh,dt){
     ctx.fillStyle='#4a6a80';
     ctx.globalAlpha=1;
     /* (item 29) Three actions, not one. */
-    ctx.fillText(G('confirm')+'  NEXT RACE     '+
-                 G('cancel')+'  MAP     '+
-                 G('alt')+'  REPLAY', vw/2, vh-40);
+    ctx.fillText(G('confirm')+'  NEXT RACE (MAP)     '+
+                 G('alt')+'  RACE AGAIN     '+
+                 G('cancel')+'  TITLE SCREEN', vw/2, vh-40);
   }
   ctx.restore();
 }
@@ -4783,9 +4835,26 @@ function fmt(ms){
 function victoryReturnToMap(){
   if(Flow.t<0.8)return;
   Flow.mode='map';
-  Flow.dotAnim=(Flow.result&&Flow.result.won)?0.001:0;
+  Flow.dotAnim=0;
+  /* ═══ UNLOCK REVEAL (request 3 item 4). Back on the map, a trail of small
+     white dots runs from the settlement just won to every settlement the win
+     opened, each lighting up with a burst as the trail arrives. The first
+     new settlement is selected, so the player sees the progress and then
+     chooses where to race next — a win can open more than one route. */
+  var r=Flow.result;
+  if(r&&r.won&&r.newly&&r.newly.length&&Flow.settlement){
+    Flow.reveal={from:Flow.settlement.id,ids:r.newly.slice(),t:0};
+    try{ if(M.selectId)M.selectId(r.newly[0]); }catch(e){}
+  } else Flow.reveal=null;
   Flow.result=null;
   Flow.previewFlipped=false;
+}
+/* B on the result screen: back to the title screen. Returns false so the
+   shell runs its own World Tour exit (closeWorldMap). */
+function victoryToTitle(){
+  if(Flow.t<0.8)return true;
+  Flow.mode='map'; Flow.result=null; Flow.reveal=null; Flow.previewFlipped=false;
+  return false;
 }
 /* Kept under its old name: other call sites and the shell may reference it. */
 function victoryContinue(){ victoryReturnToMap(); }
@@ -4847,9 +4916,9 @@ function frame(ctx,vw,vh,dt){
   Flow.t+=dt;
   if(Flow.mode==='racing')return;          // the engine owns the screen
   M.draw(ctx,vw,vh,dt);
-  if(Flow.dotAnim>0&&Flow.dotAnim<1){
-    Flow.dotAnim=Math.min(1,Flow.dotAnim+dt*1.6);
-    drawDotBurst(ctx,vw,vh);
+  if(Flow.reveal&&Flow.mode==='map'){
+    Flow.reveal.t+=dt;
+    try{ drawUnlockReveal(ctx,vw,vh); }catch(e){ Flow.reveal=null; }
   }
   if(Flow.mode==='zooming')drawZoomIn(ctx,vw,vh,dt);
   else if(Flow.mode==='history')drawHistory(ctx,vw,vh,dt);
@@ -5058,10 +5127,57 @@ function drawShopButton(ctx,vw,vh){
   ctx.restore();
 }
 
+function drawUnlockReveal(ctx,vw,vh){
+  var R=Flow.reveal; if(!R)return;
+  var from=M.posOf?M.posOf(R.from):null;
+  var T=R.t, anyOn=false, DOT=9, SPEED=26;          // dot spacing px, dots/s
+  ctx.save();
+  for(var n=0;n<R.ids.length;n++){
+    var to=M.posOf?M.posOf(R.ids[n]):null;
+    var t0=n*0.55;                                  // routes reveal one after another
+    var lt=T-t0; if(lt<0){anyOn=true;continue;}
+    if(!to){ continue; }                            // opened in another municipality
+    var fx=from?from[0]:to[0], fy=from?from[1]:to[1]-60;
+    var dx=to[0]-fx, dy=to[1]-fy, len=Math.max(1,Math.sqrt(dx*dx+dy*dy));
+    var nx=-dy/len, ny=dx/len, bow=Math.min(60,len*0.18)*(n%2?-1:1);
+    var nd=Math.max(2,Math.floor(len/DOT)), shown=Math.min(nd,Math.floor(lt*SPEED*(1+len/400)));
+    for(var d=1;d<=shown;d++){
+      var u=d/nd, b=4*u*(1-u)*bow;
+      var px=fx+dx*u+nx*b, py=fy+dy*u+ny*b;
+      var age=(shown-d)/SPEED;
+      ctx.globalAlpha=Math.max(0.35,1-age*0.25);
+      ctx.fillStyle='#ffffff';
+      ctx.beginPath();ctx.arc(px,py,d===shown?3:1.8,0,Math.PI*2);ctx.fill();
+    }
+    if(shown<nd){ anyOn=true; continue; }
+    var at=nd/(SPEED*(1+len/400)), bt=lt-at;       // arrival burst
+    if(bt<1.6){
+      anyOn=true;
+      var k=Math.min(1,bt/1.2);
+      ctx.globalAlpha=1-k;
+      ctx.strokeStyle='#ffffff';ctx.lineWidth=2.5*(1-k)+0.5;
+      ctx.beginPath();ctx.arc(to[0],to[1],8+k*46,0,Math.PI*2);ctx.stroke();
+      for(var q=0;q<12;q++){
+        var a=q*Math.PI/6+bt*0.8, rr=10+k*38;
+        ctx.globalAlpha=(1-k)*0.9; ctx.fillStyle='#ffffff';
+        ctx.beginPath();ctx.arc(to[0]+Math.cos(a)*rr,to[1]+Math.sin(a)*rr,1.8,0,Math.PI*2);ctx.fill();
+      }
+      if(bt<1.5){
+        ctx.globalAlpha=Math.min(1,bt*4)*(1-Math.max(0,(bt-1.0)/0.5));
+        ctx.font="9px 'Press Start 2P',monospace";ctx.textAlign='center';ctx.textBaseline='bottom';
+        ctx.fillStyle='#ffffff';ctx.fillText('NEW TRACK UNLOCKED',to[0],to[1]-18-k*6);
+      }
+    }
+  }
+  ctx.restore();
+  if(!anyOn&&T>1)Flow.reveal=null;
+}
 function drawDotBurst(ctx,vw,vh){
   var st=Flow.settlement; if(!st)return;
   var k=Flow.dotAnim;
-  var cx=st.px*vw, cy=st.py*vh;
+  var p=(M.posOf&&M.posOf(st.id))||[st.px*vw,st.py*vh];
+  var cx=p[0], cy=p[1];
+  if(!isFinite(cx)||!isFinite(cy))return;
   ctx.save();
   ctx.strokeStyle='rgba(57,255,20,'+(1-k).toFixed(2)+')';
   ctx.lineWidth=3*(1-k)+1;
@@ -5106,8 +5222,10 @@ function input(btn){
   }
   if(Flow.mode==='zooming')return true;   // (9) transition owns the screen
   if(Flow.mode==='victory'){
-    if(btn==='a')victoryNext();
-    else if(btn==='b')victoryReturnToMap();
+    /* Xbox layout (request 3 item 4): A next race — via the map, so the
+       unlock can be seen and chosen — X race again, B title screen. */
+    if(btn==='a')victoryReturnToMap();
+    else if(btn==='b')return victoryToTitle();
     else if(btn==='x')victoryReplay();
     else return false;
     return true;
