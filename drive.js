@@ -51,7 +51,9 @@ function _bumpStrikeStart(tgt,side,gap,now){
 function _bumpImpact(T,st,now){
   const pDir=st.side;
   const preSpd=T.speed||0, prePlace=(typeof hud!=='undefined'&&hud.pos)||0;
-  const rivalShieldPct=18, youShieldPct=5, stunMs=2800, rivalSpeedCut=0.86;
+  /* 20% (request 4 item 7): every landed bump costs a fifth of the
+     player's energy, so it is a tactical choice, not a free move. */
+  const rivalShieldPct=18, youShieldPct=20, stunMs=2800, rivalSpeedCut=0.86;
   T._railBounce=(T._railBounce||0)+pDir*20;
   T.speed=preSpd*(1-rivalSpeedCut);
   T.x+=pDir*0.9;
@@ -5356,7 +5358,7 @@ function _buildTrackImpl(seed){
     const w=_wtCfg();
     return _AO('_trackLength',1)*(segments._charLen||1)*((w&&w.lenMul)?w.lenMul:1);
   })();
-  let _lenTarget=Math.round(TOTAL_SEGS*_lenMul*Math.max(0.3,Math.min(3,_tlMul)));
+  let _lenTarget=Math.round(TOTAL_SEGS*_lenMul*Math.max(0.3,Math.min(4,_tlMul)));
   _lenTarget=Math.max(1200,Math.min(TRACK_MAX_SEGS-900,_lenTarget));
 
   // Feature budget scales with length; long tracks get proportionally more.
@@ -8791,6 +8793,10 @@ function padKind(){
     for(const pd of pads){
       if(!pd||!pd.connected)continue;
       const id=(pd.id||'').toLowerCase();
+      /* Xbox FIRST: Microsoft's pad reports "Xbox Wireless Controller", which
+         contains Sony's generic "Wireless Controller" — checked the other way
+         round, an Xbox pad was labelled with PlayStation glyphs. */
+      if(/xbox|xinput|microsoft|045e/.test(id)){_padKind='xbox';return _padKind;}
       if(/dualsense|dualshock|playstation|wireless controller|054c/.test(id)){_padKind='sony';return _padKind;}
       if(/pro controller|joy-?con|nintendo|057e/.test(id)){_padKind='nintendo';return _padKind;}
       if(id){_padKind='xbox';return _padKind;}
@@ -9320,7 +9326,7 @@ function updatePlayer(dt,inp){
   // each completed lap. The tunnel-hub bonus now grants an extra charge once.
   if(!P._hubCharge&&race.goMs>0&&(race.turboWait||TURBO_WAIT)<TURBO_WAIT
      &&now-race.goMs>4000&&P.turboCharges<TURBO_MAX){
-    P._hubCharge=true;P.turboCharges++;showMsg('\u26a1 TUNNEL HUB BONUS TURBO');
+    P._hubCharge=true;P.turboCharges++;
   }
   let top=MAX_SPEED*GAME_SPEED_MUL*((dm._mach&&dm._mach.speedMul)||1);
   /* The player drafts on the same terms as the AI. This was missing
@@ -9342,7 +9348,7 @@ function updatePlayer(dt,inp){
   if(now<(P.arrowUntil||0))top*=1.40;              // speed arrow: +40% for 3 s
   /* Announce each set piece as the player enters it, so it is noticed. */
   { const _gs=seg(P.z), _k=_gs&&_gs._sp!=null?_gs._sp:-1;
-    if(_k>=0&&_k!==P._spIn&&(_gs._spT||0)<0.2){ try{ showToast('\u26a1 '+SP_NAMES[_k]+'!',true); }catch(e){} }
+    /* request 4 item 5: no feature-name toasts */
     P._spIn=_k; }
   /* SIDEWAYS SURGE: on sections that turn the road onto its side (wall rides,
      twists, corkscrews/helixes) the top speed doubles, and the car surges
@@ -9351,7 +9357,7 @@ function updatePlayer(dt,inp){
     const _sg=seg(P.z), _side=!!(_sg&&(_sg.wallride||_sg.twist||_sg.corkscrew||_sg.helix||_sg.tube||_sg.pipe||_sg.halfpipe||_sg.loop));   // every section where the road visibly turns around the car
     if(_side){
       top*=3;   // 300% speed while the road is turned sideways
-      if(!P._sideSurge){ P._sideSurge=true; try{ showToast('\u26a1 SIDEWAYS SURGE \u00d73',true); }catch(e){} }
+      if(!P._sideSurge){ P._sideSurge=true; }
       if(inp&&(inp.acc||inp.acc2))P.speed=Math.min(top,P.speed+(top-P.speed)*Math.min(1,dt*2.4));
     } else P._sideSurge=false;
   }
@@ -9377,17 +9383,17 @@ function updatePlayer(dt,inp){
    // Camera punch when a speed feature engages — a short, sharp FOV kick.
    if(_cs&&(_cs.boost||_cs.rush||_cs.corkBoost)&&_fovPunch<0.02)_fovPunch=0.07;
    if(_cs&&_cs.corkBoost){top*=3.0;   // +200% through the spiral
-     if(!P._corkMsg){P._corkMsg=true;showMsg('\u26a1 CORKSCREW RUSH +200% \u26a1');}}
+     if(!P._corkMsg){P._corkMsg=true;}}
    else if(P._corkMsg)P._corkMsg=false;
    // Generic speed-rush zones (tubes, boost causeways) — exhilarating bursts
    if(_cs&&_cs.rush){top*=_cs.rush;
      if(!P._rushMsg){P._rushMsg=true;
-       showMsg(_cs.rushZone?'\u26a1 SPEED RUSH \u26a1':'TUBE BOOST');}}
+       }}
    else if(P._rushMsg)P._rushMsg=false;
    // Zigzag storm: forces braking with deceleration pressure, not a speed cap
    if(_cs&&_cs.zigzagBrake&&P.speed>MAX_SPEED*0.6){
      P.speed+=BRAKING*dt*0.55;  // strong push to brake, doesn't cap top speed
-     if(!P._zigzagMsg){P._zigzagMsg=true;showMsg('⚡ ZIGZAG STORM · BRAKE!');}}
+     if(!P._zigzagMsg){P._zigzagMsg=true;}}
    else if(P._zigzagMsg&&!(_cs&&_cs.zigzagBrake))P._zigzagMsg=false;}
   if(inp.turbo){
     P._turboHeld=(P._turboHeld||0)+dt;
@@ -9665,6 +9671,9 @@ function updatePlayer(dt,inp){
       for(var _bi=0;_bi<rivals.length;_bi++){
         var _r=rivals[_bi];
         if(_r.finished||_r.exploded)continue;
+        /* Only rivals on screen right now can be locked — a target behind a
+           crest or past the draw distance put the crosshair on empty road. */
+        if(!_r._scr||((dm._frameNo|0)-_r._scr.f)>3)continue;
         var _dz=_r.z-P.z; if(_dz>trackLength/2)_dz-=trackLength; if(_dz<-trackLength/2)_dz+=trackLength;
         if(_dz>_SCAN_AHEAD||_dz<-_SCAN_BEHIND)continue;
         var _dx=_r.x-P.x;
@@ -9892,7 +9901,7 @@ var _leanHelp=0;
   const _bkRaw=s.bank||0;
   const _bankK=(_bkRaw&&Math.sign(_bkRaw)===Math.sign(s.curve||0))?Math.min(1,Math.abs(_bkRaw)):0;
   const _surf=(s.surf&&SURFACES[s.surf])||null;
-  if(s.offCamber){ if(!P._inOC){ P._inOC=true; if(!dm.demo)showMsg('\u26a0 OFF-CAMBER!'); } } else P._inOC=false;
+  if(s.offCamber){ if(!P._inOC){ P._inOC=true; } } else P._inOC=false;
   let _latDrift;
   if(!_air&&spct<=1){
     _latDrift=-(1.166*(1+CityLink.gripBonus())*_leanGrip*Math.pow(Math.max(0,spct),3.2)*s.curve);
@@ -10083,7 +10092,7 @@ var _leanHelp=0;
         _railImpactFx(Math.min(1,spct));
         fxTrigger('hitFlash',1);              // (11.2) chroma split
         FX.combo=0;FX.comboT=0;P._comboDist=0; // (11.10) clean run broken
-        showMsg('\u26a1 GUIDE BEAM SLAM');
+        
         try{fireRumble();}catch(e){}
       } else {
         // Glancing contact. (4) Speed scrub halved: 0.88 -> 0.44 per second.
@@ -10189,7 +10198,7 @@ var _leanHelp=0;
   if(s.boost&&Math.abs(P.x)<1&&P.speed>MAX_SPEED*0.2)P.speed=clamp(P.speed*_gk+30,0,top*1.12);}
   // speed-increase arrows: pass over → +40% top speed for 3 s
   if(s.arrow&&Math.abs(P.x-(s.arrowX||0))<0.34&&now>=(P.arrowUntil||0)){
-    P.arrowUntil=now+3000;P.speed=clamp(P.speed*1.15,0,top*1.4);showMsg('SPEED UP! +40%');}
+    P.arrowUntil=now+3000;P.speed=clamp(P.speed*1.15,0,top*1.4);}
   // jump ramps: catapult for 2 s — airborne machine ignores rails/off-road,
   const _rampBound=1.03*Math.max(1,_widthMul)+0.05;
   if(s.ramp&&_isRealRamp(s)&&P.speed>MAX_SPEED*0.25&&now>=(P.airUntil||0)&&Math.abs(P.x)<_rampBound){
@@ -10216,7 +10225,7 @@ var _leanHelp=0;
     P.airUntil=now+(_splitJump?AIR_TOTAL*1.6:AIR_TOTAL)*_airMul;P.airStart=now;
     if(_splitJump){P.speed=Math.min(MAX_SPEED*1.05,P.speed*1.08);P._onHighRoad=P.airUntil;
       P._lastRampSafe=now;}  // mark launch as safe so off-rail landing is OK
-    showMsg(_splitJump?'\u26a1 HIGH ROAD!':'JUMP!');fireRumble();}
+    fireRumble();}
   // road gap: on a missing chunk without being airborne → fall, respawn back
   if(s.gap&&!(P.airUntil>now)){
     // (4) UNIFORM DAMAGE SCALE. Contact damage was set piecemeal: the guide
@@ -10244,7 +10253,7 @@ var _leanHelp=0;
       if(P.power<=0.5){
         P.z=Math.max(0,(~~(P.z/SEG_LEN)-16)*SEG_LEN);
         P.speed=MAX_SPEED*0.2;P.x=0;P.roll=0;P.power=(P.powerCap||100)*0.4;
-        showMsg('LOST GRIP!');fireRumble();
+        fireRumble();
       }
     }
     // PIPE: on a 360° conduit the machine can orbit the full circumference.
@@ -10286,7 +10295,7 @@ var _leanHelp=0;
     }
     if(P.lap>LAPS&&!P.finished){P.finished=true;P.finishMs=now;showMsg('FINISH!');}
     else if(!P.finished){showMsg('LAP '+P.lap+'/'+LAPS);
-      if(_trackHasJunction)showMsg('JUNCTIONS SHIFTED!');}}
+      }}
   if(P._xIntegrated!==undefined){
     const _corr=P.x-P._xIntegrated;
     if(_corr*(P.vx||0)<0){
@@ -10506,7 +10515,6 @@ function updateRivals(dt){
         if(!r._lockOnUntil&&Math.random()<0.25){
           r._lockOnUntil=now+1100; r._lockOnStart=now;
           dm._rivalLockUntil=now+1100;
-          showToast('\u26a0 RIVAL LOCKED ON YOU \u00b7 TURBO TO ESCAPE',false);
           r._aiBumpCd=now+1100;
         } else if(r._lockOnUntil&&now>=r._lockOnUntil){
           r._lockOnUntil=0;
@@ -12316,6 +12324,7 @@ function _camCutReset(){
 const _perf={world:0,loop:0,frames:0};
 function renderWorld(vw,vh,camPan){
   const t0=performance.now();
+  dm._frameNo=(dm._frameNo|0)+1;
   try{ return _renderWorldImpl(vw,vh,camPan); }
   finally{ const d=performance.now()-t0; _perf.world=_perf.frames?_perf.world*0.92+d*0.08:d; _perf.frames++; }
 }
@@ -17360,6 +17369,9 @@ function drawRival(r,vw,vh){
   let rLift=0;
   if(r.airUntil>_rnow){rLift=airLift(r.airStart,_rnow)*h*3.4;}
   const y2=ry+hover-rLift;
+  /* Where this rival was actually drawn this frame — the lock-on crosshair
+     follows THIS, not a re-projection of its segment (request 4 item 10). */
+  r._scr={x:cx2,y:y2-h*0.5,w:w,f:dm._frameNo|0};
   ctx.fillStyle=_ca('rgba(0,0,0,',0.45*(1-rLift/(h*4)));
   ctx.beginPath();ctx.ellipse(cx2,ry+2,w*0.52*(1-rLift/(h*8)),h*0.16,0,0,Math.PI*2);ctx.fill();
   ctx.fillStyle=r.col;
@@ -17460,10 +17472,16 @@ function drawBumpFX(vw,vh){
   const cbh=dm._chargeBump;
   if(cbh&&cbh.active&&cbh.target){
     const T=cbh.target, pr=cbh.progress;
-    let tx=null,ty=null;
-    try{ const g=seg((T._rz!==undefined)?T._rz:T.z); if(g&&g.p1&&g.p1.screen&&g.p1.screen.w){ tx=g.p1.screen.x+g.p1.screen.w*((T._rx!==undefined)?T._rx:T.x); ty=g.p1.screen.y; } }catch(e){}
-    if(tx==null||!isFinite(tx)||!isFinite(ty)||ty<0||ty>vh){ tx=vw/2; ty=vh*0.42; }
-    ty-=20;
+    /* The crosshair sits on the rival as drawn this frame. If the rival is
+       momentarily hidden (a crest), it holds its last on-screen position
+       and eases toward it rather than jumping to empty space. */
+    const sc=T._scr, fresh=sc&&((dm._frameNo|0)-sc.f)<=3;
+    let tx=sc?sc.x:vw/2, ty=sc?sc.y:vh*0.42;
+    if(!dm._xhair||dm._xhair.T!==T)dm._xhair={x:tx,y:ty,T:T};
+    const H=dm._xhair;
+    if(fresh&&isFinite(tx)&&isFinite(ty)){ H.x+=(tx-H.x)*0.55; H.y+=(ty-H.y)*0.55; }
+    tx=H.x; ty=H.y;
+    ctx.globalAlpha=fresh?1:0.45;
     const pulse=0.6+0.4*Math.sin(now*0.012);
     const col=cbh.charged?'100,255,120':'255,190,80';
     const csz=(cbh.charged?38:52-pr*14)+Math.sin(now*0.01)*4;
@@ -17486,9 +17504,10 @@ function drawBumpFX(vw,vh){
     ctx.font='bold 13px monospace';ctx.fillStyle='rgba(255,255,255,0.85)';
     const gs=Math.round(cbh.gapSeg||0);
     ctx.fillText((T.name||'RIVAL')+' · '+(gs>=0?gs+' SEG AHEAD':(-gs)+' SEG BEHIND')+(cbh.nTargets>1?' · LB NEXT ('+cbh.nTargets+')':''),tx,ty-csz-(cbh.charged?44:34));
+    ctx.globalAlpha=1;
     // effect preview strip — what landing this bump will do
     const lines=[['RIVAL','-86% SPEED · STUN 2.8s · -18% SHIELD','#ff8a6a'],
-                 ['YOU','+22% SLINGSHOT · -5% SHIELD','#7dffb0']];
+                 ['YOU','+22% SLINGSHOT · -20% SHIELD','#7dffb0']];
     const pfs=Math.round(Math.max(9,Math.min(13,vh*0.026)));
     ctx.font='bold '+pfs+'px monospace';ctx.textBaseline='middle';
     const plw=ctx.measureText('RIVAL ').width+pfs;
@@ -17538,54 +17557,7 @@ function drawBumpFX(vw,vh){
     }
     ctx.globalAlpha=1;
   }
-  // ── IMPACT CARD: exactly what the bump just did, sized to the viewport
-  const bc=dm._bumpCard;
-  if(bc){
-    const e=now-bc.t, DUR=3400;
-    if(e>DUR){ dm._bumpCard=null; }
-    else if(e>150){
-      if(!bc.placeAfter&&e>1300)bc.placeAfter=(typeof hud!=='undefined'&&hud.pos)||bc.placeBefore;
-      const inK=Math.min(1,(e-150)/220), outK=e>DUR-400?(DUR-e)/400:1, a=Math.min(inK,outK);
-      const fs=Math.round(Math.max(9,Math.min(15,vh*0.030))), fh=Math.round(fs*1.35);
-      const rows=[
-        [bc.col,String(bc.name).slice(0,10),'SPEED '+bc.rivalSpeed+'%','STUNNED '+bc.stun.toFixed(1)+'s','SHIELD '+bc.rivalShield+'%','#ff8a6a'],
-        ['#7dffb0','YOU','SPEED +'+bc.surge+'%','SLINGSHOT 1.4s','SHIELD '+bc.youShield+'%','#7dffb0']];
-      ctx.font='bold '+fs+'px monospace';
-      const cw1=Math.max(ctx.measureText(rows[0][1]).width,ctx.measureText('YOU').width)+fs;
-      const cw2=Math.max(ctx.measureText(rows[0][2]).width,ctx.measureText(rows[1][2]).width)+fs;
-      const cw3=Math.max(ctx.measureText(rows[0][3]).width,ctx.measureText(rows[1][3]).width)+fs;
-      const cw4=Math.max(ctx.measureText(rows[0][4]).width,ctx.measureText(rows[1][4]).width);
-      const head='⚡ BUMP LANDED'+(bc.range>2?' · '+bc.range+' SEG STRIKE':'');
-      ctx.font='bold '+Math.round(fs*1.3)+'px monospace';
-      const hw=ctx.measureText(head).width;
-      const cw=Math.min(vw-24,Math.max(hw,fs*1.2+cw1+cw2+cw3+cw4)+fs*2), chh=fh*4.6;
-      const cx=vw/2-cw/2+(1-inK)*-50, cy=Math.round(vh*0.30);
-      ctx.globalAlpha=a;
-      ctx.fillStyle='rgba(8,6,16,0.82)';ctx.fillRect(cx,cy,cw,chh);
-      ctx.fillStyle='#ffb13d';ctx.fillRect(cx,cy,cw,3);
-      ctx.textBaseline='middle';ctx.textAlign='left';
-      ctx.fillStyle='#fff';ctx.fillText(head,cx+fs,cy+fh*0.85);
-      ctx.font='bold '+fs+'px monospace';
-      for(let k=0;k<2;k++){
-        const ry=cy+fh*(2.0+k*1.1), rv=Math.min(1,Math.max(0,(e-300-k*160)/260));
-        let x=cx+fs;
-        ctx.globalAlpha=a*rv;
-        ctx.fillStyle=rows[k][0];ctx.fillRect(x,ry-fs*0.45,fs*0.4,fs*0.9); x+=fs*0.8;
-        ctx.fillStyle='#fff';ctx.fillText(rows[k][1],x,ry); x+=cw1;
-        ctx.fillStyle=rows[k][5];ctx.fillText(rows[k][2],x,ry); x+=cw2;
-        ctx.fillStyle=k?'#bfffe0':'#ffd24d';ctx.fillText(rows[k][3],x,ry); x+=cw3;
-        ctx.fillStyle='rgba(255,255,255,0.65)';ctx.fillText(rows[k][4],x,ry);
-      }
-      ctx.globalAlpha=a*Math.min(1,Math.max(0,(e-1300)/300));
-      if(bc.placeAfter){
-        const gained=bc.placeBefore-bc.placeAfter;
-        ctx.textAlign='center';
-        ctx.fillStyle=gained>0?'#7dffb0':'#dfe6ff';
-        ctx.fillText(gained>0?('POSITION P'+bc.placeBefore+' → P'+bc.placeAfter+'  ▲'+gained):('HOLDING P'+bc.placeAfter),vw/2,cy+fh*3.9);
-      }
-      ctx.globalAlpha=1;
-    }
-  }
+  /* The BUMP LANDED card is a DOM overlay now (updateHudDom). */
   ctx.restore();
 }
 function drawPlayerMachine(vw,vh,camPan){
@@ -18503,7 +18475,63 @@ function _gpuSnowLive(){
 }
 function _gpuSnowHide(){ try{ if(_gpuSnowCv)_gpuSnowCv.style.display='none'; }catch(e){} }
 
+/* ═══ DOM HUD OVERLAY (request 4 items 4 and 6). Text drawn with the title
+   logo's t-logo fire treatment, which is a CSS effect and so needs DOM:
+     #zs-bumpcard  the BUMP LANDED card, pinned to the top of the screen;
+     #zs-lockwarn  the rival lock-on alert, riding above the player's machine
+                   between the two red arrows drawn on the canvas.
+   Updated from drawHUD every frame; a watchdog hides it the moment the race
+   stops drawing (exit, pause screens, menus). */
+let _hudDom=null;
+function _tlogo(t,cls){ t=String(t).replace(/[&<>"]/g,''); return '<span class="t-logo '+(cls||'')+'" data-text="'+t+'">'+t+'</span>'; }
+function _hudDomEl(){
+  if(_hudDom&&_hudDom.isConnected)return _hudDom;
+  _hudDom=document.createElement('div'); _hudDom.id='zs-hudfx';
+  _hudDom.innerHTML='<div id="zs-bumpcard"></div><div id="zs-lockwarn">'+
+    _tlogo('RIVAL LOCKED ON YOU','zs-lw-main')+_tlogo('TURBO TO ESCAPE','zs-lw-sub')+'</div>';
+  document.body.appendChild(_hudDom);
+  if(!_hudDom._wd)_hudDom._wd=setInterval(()=>{ try{ if(_hudDom&&performance.now()-(_hudDom._seen||0)>300){
+    _hudDom.children[0].style.display='none'; _hudDom.children[1].style.display='none'; } }catch(e){} },250);
+  return _hudDom;
+}
+function updateHudDom(vw,vh){
+  let el; try{ el=_hudDomEl(); }catch(e){ return; }
+  const now=performance.now(); el._seen=now;
+  const card=el.children[0], lw=el.children[1], bc=dm._bumpCard;
+  if(bc&&!dm.demo&&!race.paused&&!race.over){
+    const e=now-bc.t, DUR=3400;
+    if(e>DUR){ dm._bumpCard=null; card.style.display='none'; }
+    else{
+      if(!bc.placeAfter&&e>1300)bc.placeAfter=(hud&&hud.pos)||bc.placeBefore;
+      const key=bc.t+'|'+bc.placeAfter;
+      if(card._key!==key){
+        card._key=key;
+        const gained=bc.placeAfter?bc.placeBefore-bc.placeAfter:0;
+        card.innerHTML=
+          '<div class="zs-bc-head">'+_tlogo('BUMP LANDED'+(bc.range>2?' \u00b7 '+bc.range+' SEG STRIKE':''),'zs-bc-h')+'</div>'+
+          '<div class="zs-bc-row"><i style="background:'+bc.col+'"></i>'+_tlogo(String(bc.name).slice(0,10))+
+            _tlogo('SPEED '+bc.rivalSpeed+'%')+_tlogo('STUNNED '+bc.stun.toFixed(1)+'s')+_tlogo('SHIELD '+bc.rivalShield+'%')+'</div>'+
+          '<div class="zs-bc-row"><i style="background:#7dffb0"></i>'+_tlogo('YOU')+
+            _tlogo('SPEED +'+bc.surge+'%')+_tlogo('SLINGSHOT 1.4s')+_tlogo('ENERGY '+bc.youShield+'%')+'</div>'+
+          (bc.placeAfter?'<div class="zs-bc-row">'+_tlogo(gained>0?('POSITION P'+bc.placeBefore+' \u2192 P'+bc.placeAfter+'  \u25b2'+gained):('HOLDING P'+bc.placeAfter))+'</div>':'');
+      }
+      card.style.display='flex';
+      card.style.opacity=String(e<180?e/180:(e>DUR-400?Math.max(0,(DUR-e)/400):1));
+    }
+  } else card.style.display='none';
+  if(dm._rivalLockUntil&&now<dm._rivalLockUntil&&!dm.demo&&!race.paused&&!race.over){
+    const cv=document.getElementById('_drive_canvas');
+    const r=cv?cv.getBoundingClientRect():{left:0,top:0,width:innerWidth,height:innerHeight};
+    const sx=r.width/Math.max(1,vw), sy=r.height/Math.max(1,vh);
+    const cw=dm._playerCarW||vw*0.09;
+    const cx=(_camMode!==5&&dm._carDrawX!=null)?dm._carDrawX:vw/2, cy=(_camMode!==5&&dm._carDrawY!=null)?dm._carDrawY:vh*0.75;
+    lw.style.left=(r.left+cx*sx)+'px';
+    lw.style.top=(r.top+(cy-cw*0.70+Math.sin(now/110)*cw*0.10)*sy)+'px';
+    lw.style.display='flex';
+  } else lw.style.display='none';
+}
 function drawHUD(vw,vh){
+  try{ updateHudDom(vw,vh); }catch(e){}
   /* LOCK-ON ALERTS: a pulsing red frame while a rival is locked on the player,
      and a steady label while the player's own lock is held. */
   {
@@ -18512,6 +18540,23 @@ function drawHUD(vw,vh){
       const a=0.35+0.35*Math.sin(_nw/70);
       ctx.save(); ctx.strokeStyle='rgba(255,40,40,'+a.toFixed(2)+')'; ctx.lineWidth=Math.max(4,vh*0.012);
       ctx.strokeRect(ctx.lineWidth/2,ctx.lineWidth/2,vw-ctx.lineWidth,vh-ctx.lineWidth); ctx.restore();
+      /* Two red arrows point down at the machine, one each side, bobbing
+         and swaying back and forth; the alert text sits between them
+         (DOM, t-logo — see updateHudDom). */
+      if(_camMode!==5&&dm._carDrawX!=null&&isFinite(dm._carDrawX)){
+        const cw=dm._playerCarW||vw*0.09, cx=dm._carDrawX, cy=dm._carDrawY||vh*0.85;
+        const bob=Math.sin(_nw/110)*cw*0.10, sway=Math.sin(_nw/170)*cw*0.12;
+        const as=Math.max(10,cw*0.26);
+        ctx.save(); ctx.fillStyle='#ff2a2a'; ctx.strokeStyle='rgba(60,0,0,0.9)'; ctx.lineWidth=2;
+        ctx.shadowColor='rgba(255,40,40,0.9)'; ctx.shadowBlur=14;
+        for(const sd of [-1,1]){
+          const ax=cx+sd*(cw*0.78+sway), ay=cy-cw*0.62+bob;
+          ctx.beginPath(); ctx.moveTo(ax-as*0.35,ay-as); ctx.lineTo(ax+as*0.35,ay-as); ctx.lineTo(ax+as*0.35,ay-as*0.45);
+          ctx.lineTo(ax+as*0.7,ay-as*0.45); ctx.lineTo(ax,ay+as*0.25); ctx.lineTo(ax-as*0.7,ay-as*0.45);
+          ctx.lineTo(ax-as*0.35,ay-as*0.45); ctx.closePath(); ctx.fill(); ctx.stroke();
+        }
+        ctx.restore();
+      }
     }
     const cbx=dm._chargeBump;
     if(cbx&&cbx.active&&(cbx.progress||0)>=1){
@@ -19727,6 +19772,27 @@ function drawPodium(vw,vh,dt){
     ctx.font='bold '+~~(vh*0.05)+'px monospace';ctx.fillStyle='#9df';
     ctx.fillText('YOU FINISHED '+pod.place+suff,0,0);ctx.restore();
   }
+  /* ═══ RIVAL TIMES ON THE RESULT BOARD. A winner crosses the line before
+     anyone else has finished, so every rival read "—". The race keeps
+     running behind this screen: each rival shows its real time once it
+     finishes and, until then, a projected time (≈) from its remaining
+     distance and current pace. Rival rows re-sort as times firm up. */
+  try{
+    const _gm=race.goMs||now;
+    for(const b of pod.board){
+      if(b.me)continue;
+      const r=rivals.find(q=>q.name===b.name); if(!r)continue;
+      if(r.finished&&r.finishMs){ b.ms=r.finishMs-_gm; b.est=false; }
+      else{
+        const rem=Math.max(0,LAPS*trackLength-(r.progress||0));
+        const v=Math.max(MAX_SPEED*0.25,r.speed||0);
+        b.ms=(now-_gm)+rem/v*1000; b.est=true;
+      }
+    }
+    const me=pod.board.find(b=>b.me), others=pod.board.filter(b=>!b.me).sort((x,y)=>x.ms-y.ms);
+    others.splice(Math.max(0,pod.place-1),0,me);
+    pod.board=others;
+  }catch(e){}
   pod.board.forEach((b,i)=>{
     const rowT=T-0.7-i*0.16;
     if(rowT<0)return;
@@ -19739,7 +19805,8 @@ function drawPodium(vw,vh,dt){
     ctx.fillStyle=b.me?'#39ff14':(b.col||'#fff');
     ctx.textAlign='left';ctx.fillText((i+1)+'. '+b.name,rx+vw*0.03,y2+vh*0.012);
     ctx.textAlign='right';
-    ctx.fillText(fmtTime(b.ms),rx+vw*0.57,y2+vh*0.012);
+    if(b.est){ ctx.globalAlpha=0.6; ctx.fillText('\u2248 '+fmtTime(b.ms),rx+vw*0.57,y2+vh*0.012); ctx.globalAlpha=1; }
+    else ctx.fillText(fmtTime(b.ms),rx+vw*0.57,y2+vh*0.012);
   });
   if(T>1.6){
     ctx.textAlign='center';
@@ -20104,7 +20171,13 @@ function frame(ms){
       if(_inTube&&_wseg&&_wseg._psyOrd!=null){
         let _h=((dm.seed>>>0)^Math.imul((_wseg._psyOrd+1)|0,0x9e3779b1))>>>0;
         _h^=_h>>>16; _h=Math.imul(_h,0x7feb352d)>>>0; _h^=_h>>>15;
-        _psyOn=(_h%1000)<405;   // 40.5% of tunnels (30% raised by 35%)
+        /* Doubled (request 4 item 8): 81% of tunnels, and one in five of
+           those runs at double intensity. */
+        const _to=dm._algoOverride||null;
+        const _tOdds=(_to&&_to._tunFxOdds!=null)?+_to._tunFxOdds:0.81;
+        const _tInt=(_to&&_to._tunFxIntense!=null)?+_to._tunFxIntense:0.20;
+        _psyOn=(_h%1000)<_tOdds*1000;
+        dm._tunIntense=(((_h>>>11)%100)<_tInt*100);
       }
       var _wantFluid=(_inTube&&_psyOn);
         /* (2) The tunnel layer is a full-screen canvas above the race canvas, so it drew ON TOP of the pause modal. */
@@ -20164,6 +20237,11 @@ function frame(ms){
             }catch(e){}
             try{ if(window.TunnelFX.setLayer)window.TunnelFX.setLayer(dm.demo?2000000:2000002); }catch(e){}
             try{ if(window.TunnelFX.setQuality)window.TunnelFX.setQuality(_q); }catch(e){}
+            try{ if(window.TunnelFX.setIntensity)window.TunnelFX.setIntensity(dm._tunIntense?2:1); }catch(e){}
+            try{ const _to=dm._algoOverride||null; if(window.TunnelFX.setForce)window.TunnelFX.setForce(
+                   _to&&typeof _to._tunFxPattern==='string'?_to._tunFxPattern:null,
+                   _to&&typeof _to._tunFxPalette==='string'?_to._tunFxPalette:null,
+                   _to&&_to._tunFxSpeed!=null?+_to._tunFxSpeed:1); }catch(e){}
             try{ if(window.TunnelFX.setBore)window.TunnelFX.setBore(dm._boreGeom||null); }catch(e){}
             /* CLEAN TUNNEL TRANSITIONS: fade the wall pattern in over the first 12
                segments of the bore and out over the last 12, instead of popping. */
@@ -21371,10 +21449,17 @@ function srOpen(){
     }
     const t2=performance.now();
     let moved=false;
-    const dir=(p,k,fn)=>{if(p){if(!prev[k]){fn();moved=true;held[k]=t2+RD;}
-      else if(t2>=held[k]){fn();moved=true;held[k]=t2+RR;}}else held[k]=0;};
+    /* HOLD TO ACCELERATE (Track Lab step 3): the longer a direction is held,
+       the bigger each step (x1 -> x2 -> x5 -> x12) and the faster it repeats. */
+    const dir=(p,k,fn)=>{if(p){if(!prev[k]){fn(1);moved=true;held[k]=t2+RD;held[k+'0']=t2;}
+      else if(t2>=held[k]){ const hf=t2-(held[k+'0']||t2);
+        fn(hf>2200?12:hf>1300?5:hf>600?2:1); moved=true; held[k]=t2+(hf>600?45:RR); }}else held[k]=0;};
 
     const _rowN=srEditRows().length;
+    /* View (back) resets the selected setting, L3 resets the whole tab. */
+    const VW=B_(8), L3=B_(10);
+    if(srEdit&&VW&&!prev.VW){ srResetRow(); moved=true; }
+    if(srEdit&&L3&&!prev.L3){ srResetTab(); moved=true; }
     /* LT / RT = fast adjust (6x the step, short repeat); LB / RB = tabs. */
     const LB=B_(4), RB=B_(5), LT=B_(6), RT=B_(7);
     if(srEdit&&(LT||RT)){
@@ -21390,8 +21475,8 @@ function srOpen(){
     if(srEdit){
       dir(U,'U',()=>{srEditRow=(srEditRow+_rowN-1)%_rowN;});
       dir(D,'D',()=>{srEditRow=(srEditRow+1)%_rowN;});
-      dir(L,'L',()=>{srEditAdjust(-1);});
-      dir(R,'R',()=>{srEditAdjust(1);});
+      dir(L,'L',(m)=>{srEditAdjust(-(m||1));});
+      dir(R,'R',(m)=>{srEditAdjust(m||1);});
     } else {
       dir(U,'U',()=>{srFocus=0;});
       dir(D,'D',()=>{srFocus=1;});
@@ -21428,7 +21513,7 @@ function srOpen(){
         try{ if(window.ZS_rearmDemo)window.ZS_rearmDemo(); }catch(e){}
       }
     }
-    prev={L,R,U,D,A,B:Bb,X,Y,LB,RB};
+    prev={L,R,U,D,A,B:Bb,X,Y,LB,RB,VW,L3};
   }
   _srRAF=requestAnimationFrame(_srPoll);
   ov._srStopPoll=function(){ if(_srRAF)cancelAnimationFrame(_srRAF); _srRAF=null; };
@@ -21443,6 +21528,8 @@ function srOpen(){
       case 'KeyQ': if(srEdit){srTab=(srTab+SR_TABS.length-1)%SR_TABS.length;srEditRow=0;} break;
       case 'KeyE': if(srEdit){srTab=(srTab+1)%SR_TABS.length;srEditRow=0;} break;
       case 'KeyR': if(srEdit)srShuffleTab(); break;
+      case 'Backspace': if(srEdit)srResetRow(); break;
+      case 'Delete': if(srEdit)srResetTab(); break;
       case 'ArrowUp': case 'KeyW':
         if(srEdit)srEditRow=(srEditRow+_rn-1)%_rn; else srFocus=0; break;
       case 'ArrowDown': case 'KeyS':
@@ -21731,9 +21818,72 @@ const SR_TABS=[
   {name:'PACING',    col:'#ffb13d', rows:()=>_srSec(['Pacing'],null)},
   {name:'FEATURES',  col:'#a6ffc8', rows:()=>ALGO_PARAMS.filter(p=>p.k.indexOf('_feat_')===0), chips:true},
   {name:'ENGINE',    col:'#6af0ff', rows:()=>_srSec(['Engine'],false)},
+  {name:'TUNNELS',   col:'#ff7ad0', rows:()=>_srTunnelRows()},
   {name:'LOOK & FX', col:'#ff9ad0', rows:()=>_srSec(['Visuals','Effects'],null)},
   {name:'RULES',     col:'#c0a0ff', rows:()=>_srSec(['Mechanics','Safety'],null)}
 ];
+/* TUNNELS (Track Lab steps 5-10): how many bores, and how their animated
+   walls look. The _tunFx* keys are read by the race's tunnel renderer. */
+let _SR_TUN=null;
+function _srTunnelRows(){
+  if(_SR_TUN)return _SR_TUN;
+  const TF=window.TunnelFX||{};
+  const P=(k)=>_SR_P[k];
+  _SR_TUN=[P('_feat_tunnel'),P('_feat_pipe'),P('_feat_verticalloop'),P('_boreholeFreq'),P('_smokyBoreOdds'),
+    {k:'_tunFxOdds',label:'ANIMATED WALLS',min:0,max:1,step:0.05,def:0.81,desc:'Share of tunnels whose walls carry an animated pattern'},
+    {k:'_tunFxIntense',label:'INTENSE WALLS',min:0,max:1,step:0.05,def:0.20,desc:'Share of animated tunnels running at double intensity'},
+    {k:'_tunFxSpeed',label:'WALL FLOW SPEED',min:0.25,max:4,step:0.05,def:1,desc:'How fast the wall pattern streams past (x)'},
+    {k:'_tunFxPattern',label:'WALL PATTERN',kind:'list',list:['auto'].concat(TF.patterns||[]),desc:'Force one of the '+((TF.patterns||[]).length)+' wall patterns, or AUTO for a different one per tunnel'},
+    {k:'_tunFxPalette',label:'WALL PALETTE',kind:'list',list:['auto'].concat(TF.palettes||[]),desc:'Force the colour treatment of every tunnel wall'}
+  ].filter(Boolean);
+  return _SR_TUN;
+}
+const SR_TAB_INFO={QUICK:'Big dials that move whole groups of settings at once, plus the race itself.',
+  WORLD:'Where the race happens: biome, weather, light, palette and road material.',
+  SHAPE:'Corners, hills, straights and the overall form of the lap.',
+  PACING:'Boosts, hazards and how hard the track pushes.',
+  FEATURES:'Every track type the generator can place. Count per lap; 0 = never.',
+  ENGINE:'Banking, road surfaces and sky highways.',
+  TUNNELS:'Bores and tubes, and the animated patterns on their walls.',
+  'LOOK & FX':'Scenery density, atmosphere and screen effects.',
+  RULES:'Mechanics and safety: forks, squeezes, set pieces, collapses.'};
+/* WIDER RANGES (Track Lab steps 1-2). The lab edits over a broader range
+   than the random roll uses: continuous settings reach half their minimum
+   and double their maximum, feature counts double, probabilities span the
+   full 0-100%. */
+const _SR_FIXED={_lapsOverride:[1,12,1],_rivalCount:[0,7,1],_trackLength:[0.3,4,0.05]};
+function _srR(r){
+  if(r._rng)return r._rng;
+  let mn=r.min,mx=r.max,st=r.step;
+  if(r.kind==='list'||r.kind==='macro')return r._rng={min:0,max:1,step:0.05};
+  if(_SR_FIXED[r.k]){ mn=_SR_FIXED[r.k][0]; mx=_SR_FIXED[r.k][1]; st=_SR_FIXED[r.k][2]; }
+  else if(r.k.indexOf('_feat_')===0){ mn=0; mx=Math.max(4,Math.round(mx*2)); st=1; }
+  else if(mn>=0&&mx<=1.0001){ mn=0; mx=1; st=0.01; }
+  else if(r.k.indexOf('_tunFx')!==0&&r.k!=='_stormForce'&&r.k!=='_rollClamp'){ mn=mn>0?mn*0.5:mn; mx=mx*2; st=(st>=1)?st:(mx-mn)/80; }
+  if(!(st>0))st=(mx-mn)/80;
+  return r._rng={min:mn,max:mx,step:st};
+}
+function _srDef(r){ if(r.def!=null)return r.def; return +(((r.min+r.max)/2)).toFixed(3); }
+function _srFmt(r,v){
+  const R=_srR(r);
+  if(r.k.indexOf('_feat_')===0){ const n=Math.round(v); return n<=0?'OFF':'\u00d7'+n; }
+  if(R.min===0&&R.max===1&&r.k!=='_stormForce')return Math.round(v*100)+'%';
+  if(R.step>=1)return String(Math.round(v));
+  return (Math.abs(v)>=10?v.toFixed(1):v.toFixed(2));
+}
+function _srChanged(r){
+  if(!srOverrides&&r.k!=='__biome'&&r.k!=='__weather')return false;
+  if(r.kind==='macro')return r.t.some(k=>srOverrides&&k in srOverrides);
+  if(r.k==='__biome')return srBiome!==0; if(r.k==='__weather')return srWeather!==0;
+  return !!(srOverrides&&r.k in srOverrides);
+}
+function srResetRow(){
+  const r=srEditRows()[srEditRow]; if(!r)return;
+  if(r.k==='__biome'){srBiome=0;return;} if(r.k==='__weather'){srWeather=0;return;}
+  if(!srOverrides)return;
+  if(r.kind==='macro')for(const k of r.t)delete srOverrides[k]; else delete srOverrides[r.k];
+}
+function srResetTab(){ const keep=srEditRow; for(let i=0;i<srEditRows().length;i++){ srEditRow=i; srResetRow(); } srEditRow=keep; }
 function srEditRows(){ return SR_TABS[srTab%SR_TABS.length].rows(); }
 const _SR_NAMES={_trackLength:'LENGTH',_lapsOverride:'LAPS',_rivalCount:'RIVALS'};
 function srLabel(k){
@@ -21741,7 +21891,7 @@ function srLabel(k){
   return k.replace(/^_feat_/,'').replace(/^_/,'').replace(/Odds$/,'').replace(/([a-z])([A-Z])/g,'$1 $2').toUpperCase();
 }
 function _srNorm(p,v){ return Math.max(0,Math.min(1,(v-p.min)/Math.max(1e-4,p.max-p.min))); }
-function _srMacroVal(m,vals){ let a=0,n=0; for(const k of m.t){ const p=_SR_P[k]; if(!p||vals[k]==null)continue; a+=_srNorm(p,vals[k]); n++; } return n?a/n:0; }
+function _srMacroVal(m,vals){ let a=0,n=0; for(const k of m.t){ const p=_SR_P[k]; if(!p||vals[k]==null)continue; const R=_srR(p); a+=Math.max(0,Math.min(1,(vals[k]-R.min)/Math.max(1e-4,R.max-R.min))); n++; } return n?a/n:0; }
 function _srListIdx(r){ if(r.get)return r.get(); const v=srOverrides&&srOverrides[r.k];
   if(v==null)return 0; if(r.k==='_forceNight')return v?1:0; const i=r.list.indexOf(v); return i<0?0:i; }
 
@@ -21802,25 +21952,39 @@ function srRenderTiles(){
     const T=SR_TABS[srTab%SR_TABS.length], rows=T.rows();
     if(srEditRow>=rows.length)srEditRow=Math.max(0,rows.length-1);
     let h='<div class="sr2-edit"><div class="sr2-tabs">';
-    SR_TABS.forEach((t,i)=>{ h+='<span class="sr2-tab'+(i===srTab?' on':'')+'" style="'+(i===srTab?'background:'+t.col+';color:#041008':'color:'+t.col)+'">'+t.name+'</span>'; });
-    h+='</div><div class="sr2-grid'+(T.chips?' chips':'')+'" style="--rows:'+Math.ceil(rows.length/(T.chips?3:2))+'">';
+    SR_TABS.forEach((t,i)=>{
+      const n=t.rows().filter(_srChanged).length;
+      h+='<span class="sr2-tab'+(i===srTab?' on':'')+'" style="--tc:'+t.col+'">'+t.name+(n?'<b>'+n+'</b>':'')+'</span>'; });
+    h+='</div><div class="sr2-tabhead" style="--tc:'+T.col+'"><span>'+T.name+'</span><em>'+esc(SR_TAB_INFO[T.name]||'')+'</em></div>';
+    h+='<div class="sr2-grid'+(T.chips?' chips':'')+'" style="--rows:'+Math.ceil(rows.length/(T.chips?3:2))+'">';
     rows.forEach((r,i)=>{
-      const sel=i===srEditRow;
-      let val='', pct=0, col=T.col, extra='';
+      const sel=i===srEditRow, ch=_srChanged(r);
+      let val='', pct=0, dpct=null, col=T.col, extra='';
       if(r.kind==='macro'){ pct=_srMacroVal(r,vals); val=Math.round(pct*100)+''; col=r.col; extra=' sr2-macro'; }
       else if(r.kind==='list'){ const li=_srListIdx(r), nm=r.list[li]; val=String(nm).toUpperCase(); pct=r.list.length>1?li/(r.list.length-1):0;
         if(r.k==='__biome')col=SR_BIOME_COL[nm]||col; if(r.k==='__weather')col=SR_WEATHER_COL[nm]||col; }
-      else { const has=vals[r.k]!=null; const v=has?+vals[r.k]:(r.def!=null?r.def:r.min);
-        pct=_srNorm(r,v); val=(!has&&r.def!=null&&!(srOverrides&&r.k in srOverrides))?'AUTO':((r.step>=1)?String(Math.round(v)):v.toFixed(2));
-        if(T.chips){ const n=Math.round(v); extra=n<=0?' off':''; val=n<=0?'OFF':('×'+n); }
+      else { const R=_srR(r), has=vals[r.k]!=null, v=has?+vals[r.k]:_srDef(r);
+        pct=Math.max(0,Math.min(1,(v-R.min)/Math.max(1e-4,R.max-R.min)));
+        dpct=Math.max(0,Math.min(1,(_srDef(r)-R.min)/Math.max(1e-4,R.max-R.min)));
+        val=(!has&&!ch&&r.k.indexOf('_tunFx')===0)?'AUTO':_srFmt(r,v);
+        if(T.chips){ extra=Math.round(v)<=0?' off':''; if(/^ABSURD/.test(r.desc||''))extra+=' absurd'; }
         else if(r.sec)col=secCol[r.sec]||col; }
-      h+='<div class="sr2-row'+extra+(sel?' sel':'')+'"'+(r.desc?' title="'+esc(r.desc)+'"':'')+'>'+
-         '<span class="sr2-k">'+esc(r.label||srLabel(r.k))+'</span>'+(T.chips?'':bar(pct,col))+
-         '<span class="sr2-v">'+esc(val)+'</span></div>';
+      const barH=T.chips?'':('<span class="sr2-bar"><i style="width:'+Math.max(3,pct*100).toFixed(1)+'%;background:'+col+'"></i>'+
+        (dpct!=null?'<u style="left:'+(dpct*100).toFixed(1)+'%"></u>':'')+'</span>');
+      h+='<div class="sr2-row'+extra+(sel?' sel':'')+(ch?' ch':'')+'">'+
+         '<span class="sr2-k">'+(ch?'<s></s>':'')+esc(r.label||srLabel(r.k))+'</span>'+barH+
+         '<span class="sr2-v">'+(sel&&!T.chips?'\u25c0 ':'')+esc(val)+(sel&&!T.chips?' \u25b6':'')+'</span></div>';
     });
     h+='</div>';
     const cur=rows[srEditRow];
-    h+='<div class="sr2-desc">'+esc(cur?(cur.desc||(cur.kind==='macro'?'Moves '+cur.t.map(srLabel).join(', ')+' together':cur.kind==='list'?'◀▶ to choose':'')):'')+'</div>';
+    let info='';
+    if(cur){
+      info=cur.desc||(cur.kind==='macro'?'Moves '+cur.t.map(srLabel).join(', ')+' together':cur.kind==='list'?'◀▶ to choose':'');
+      if(cur.kind!=='list'&&cur.kind!=='macro'){ const R=_srR(cur); info+='  ·  RANGE '+_srFmt(cur,R.min)+' – '+_srFmt(cur,R.max)+'  ·  DEFAULT '+_srFmt(cur,_srDef(cur)); }
+      if(cur.kind==='list')info+='  ·  '+(cur.list.length)+' CHOICES';
+    }
+    h+='<div class="sr2-desc">'+esc(info)+'</div>';
+    h+='<div class="sr2-keys">◀▶ HOLD TO SPEED UP · LT/RT FAST · VIEW RESET SETTING · L3 RESET TAB · Y SHUFFLE TAB</div>';
     return h+'</div>';
   }
 
@@ -21864,14 +22028,15 @@ function srRenderTiles(){
   try{ const _sel=document.querySelector('#_sr_rand .sr2-row.sel'); if(_sel&&_sel.scrollIntoView)_sel.scrollIntoView({block:'nearest'}); }catch(e){}
 }
 
-/* Adjust the selected row of the current tab by dir (-1 or +1). */
+/* Adjust the selected row of the current tab. dir is a signed step count:
+   +-1 per press, larger while a direction is held (hold acceleration). */
 function srEditAdjust(dir){
   const rows=srEditRows();
   const r=rows[srEditRow];
   if(!r)return;
   if(!srOverrides)srOverrides={};
   if(r.kind==='list'){
-    const n=r.list.length, i=((_srListIdx(r)+dir)%n+n)%n;
+    const n=r.list.length, d=Math.sign(dir)*Math.max(1,Math.round(Math.abs(dir)/2)), i=((_srListIdx(r)+d)%n+n)%n;
     if(r.set){ r.set(i); return; }
     const nm=r.list[i];
     if(i===0)delete srOverrides[r.k];
@@ -21881,23 +22046,23 @@ function srEditAdjust(dir){
   }
   const cur=srBuildParams(0);
   if(r.kind==='macro'){
-    for(const k of r.t){ const p=_SR_P[k]; if(!p)continue;
-      const v=cur[k]!=null?cur[k]:p.min, st=(p.max-p.min)*0.05;
-      srOverrides[k]=+Math.max(p.min,Math.min(p.max,v+dir*st)).toFixed(3); }
+    for(const k of r.t){ const p=_SR_P[k]; if(!p)continue; const R=_srR(p);
+      const v=cur[k]!=null?cur[k]:p.min, st=(R.max-R.min)*0.025*dir;
+      srOverrides[k]=+Math.max(R.min,Math.min(R.max,v+st)).toFixed(3); }
     return;
   }
-  const step=r.step||((r.max-r.min)/40);
-  const base=(cur[r.k]!=null)?cur[r.k]:(r.def!=null?r.def:r.min);
-  srOverrides[r.k]=+Math.max(r.min,Math.min(r.max,base+dir*step)).toFixed(3);
+  const R=_srR(r);
+  const base=(cur[r.k]!=null)?cur[r.k]:_srDef(r);
+  srOverrides[r.k]=+Math.max(R.min,Math.min(R.max,base+dir*R.step)).toFixed(3);
 }
 /* Y: shuffle every setting on the current tab — the fun "surprise me". */
 function srShuffleTab(){
   if(!srOverrides)srOverrides={};
   for(const r of srEditRows()){
-    if(r.kind==='macro'){ for(const k of r.t){ const p=_SR_P[k]; if(p)srOverrides[k]=+(p.min+Math.random()*(p.max-p.min)).toFixed(3); } }
+    if(r.kind==='macro'){ for(const k of r.t){ const p=_SR_P[k]; if(p){ const R=_srR(p); srOverrides[k]=+(R.min+Math.random()*(R.max-R.min)).toFixed(3); } } }
     else if(r.kind==='list'){ const i=~~(Math.random()*r.list.length);
       if(r.set)r.set(i); else { if(i===0)delete srOverrides[r.k]; else { const nm=r.list[i]; srOverrides[r.k]=r.ov?r.ov(nm):nm; if(srOverrides[r.k]==null)delete srOverrides[r.k]; } } }
-    else { const st=r.step||0.01; srOverrides[r.k]=+(r.min+Math.round(Math.random()*(r.max-r.min)/st)*st).toFixed(3); }
+    else { const R=_srR(r), st=R.step||0.01; srOverrides[r.k]=+(R.min+Math.round(Math.random()*(R.max-R.min)/st)*st).toFixed(3); }
   }
 }
 /* buildTrack() is expensive (thousands of segments), so previews are debounced: a rapid run of d-pad presses only triggers one rebuild once the input  */
@@ -24204,6 +24369,7 @@ window.DriveDebug={
   placeRival(segAhead,dx){ if(!P||!rivals||!rivals.length)return false; const r=rivals[0];
     r.z=(P.z+SEG_LEN*(segAhead||40))%trackLength; r.x=clamp(P.x+(dx==null?0.35:dx),-0.9,0.9); r.speed=P.speed*0.85; r._stunUntil=0; return true; },
   bumpPose(o){ dm._bumpPoseTest=o||null; },
+  rivalLockTest(ms){ dm._rivalLockUntil=performance.now()+(ms||1500); },
   bumpHold(ms,dir){ if(!dm._bumpZoom)dm._bumpZoom={t:0,dir:1,cut:true}; dm._bumpZoom.t=performance.now()-ms; if(dir)dm._bumpZoom.dir=dir; if(dm._bumpCard)dm._bumpCard.t=performance.now()-Math.max(ms,700); if(dm._impactFlash)dm._impactFlash.t=performance.now()-ms; },
   bumpState(){ return {card:dm._bumpCard?Object.assign({},dm._bumpCard):null,strike:!!(P&&P._strike),slow:!!dm._slowMo,
     charge:dm._chargeBump?{p:dm._chargeBump.progress,ch:dm._chargeBump.charged,gap:dm._chargeBump.gapSeg}:null,inRange:dm._bumpInRange|0,count:dm._bumpCount|0}; },
@@ -24236,7 +24402,7 @@ window.DriveDebug={
   resetRace(){buildTrack(dm.seed);resetRace();},
   /* place/podium: World Tour decides a win from these. They were missing,
      so every World Tour win was recorded as a loss and nothing unlocked. */
-  _state(){return{place:(race&&race.podium)?race.podium.place:null,podium:(race&&race.podium)?{place:race.podium.place}:null,demo:!!dm.demo,attract:!!(race&&race.attract),paused:race&&race.paused,sel:race&&race.pauseSel,over:race&&race.over,count:race&&race.count,fromSR:dm.fromSR,opts:typeof pauseOpts==='function'?pauseOpts():null,speed:P&&~~P.speed,maxSpeed:MAX_SPEED,kmh:P&&~~(P.speed/MAX_SPEED*KMH_SCALE),power:P&&+P.power.toFixed(1),gameOver:race&&!!race.gameOver,exploding:race&&!!race.exploding,air:P&&P.airUntil>performance.now(),px:P&&+P.x.toFixed(3),vx:P&&+(P.vx||0).toFixed(3),slip:P&&+(P.slip||0).toFixed(3),cam:{scaleK:+(dm._carScaleK||0).toFixed(3),drawX:dm._carDrawX!=null?+dm._carDrawX.toFixed(2):null,rx:(P&&P._rx!=null)?+P._rx.toFixed(5):null,alpha:+(dm._alpha||0).toFixed(3),roadK:+(dm._carRoadK||0).toFixed(3),orbZ:+(dm._orbitZ||0).toFixed(1),az:+(dm._orbitAz||0).toFixed(3),zoom:+(dm._orbitZoom||0).toFixed(2),oz:+(dm._orbitZ||0).toFixed(2),ox:+(dm._orbitX||0).toFixed(2),lift:+(dm._orbitLift||0).toFixed(2),shot:dm._lastDemoShot},rivals:rivals?rivals.map(function(r){return{id:r._id,spd:~~r.speed,top:~~r.top,lap:r.lap,x:+r.x.toFixed(2),blk:+(r._blockT||0).toFixed(2)};}):[],power2:P&&+P.power.toFixed(1),P:P,seg:seg,demoClock:_demoClock};},
+  _state(){return{place:(race&&race.podium)?race.podium.place:null,podium:(race&&race.podium)?{place:race.podium.place,board:race.podium.board.map(b=>({n:b.name,ms:isFinite(b.ms)?Math.round(b.ms):null,est:!!b.est}))}:null,demo:!!dm.demo,attract:!!(race&&race.attract),paused:race&&race.paused,sel:race&&race.pauseSel,over:race&&race.over,count:race&&race.count,fromSR:dm.fromSR,opts:typeof pauseOpts==='function'?pauseOpts():null,speed:P&&~~P.speed,maxSpeed:MAX_SPEED,kmh:P&&~~(P.speed/MAX_SPEED*KMH_SCALE),power:P&&+P.power.toFixed(1),gameOver:race&&!!race.gameOver,exploding:race&&!!race.exploding,air:P&&P.airUntil>performance.now(),px:P&&+P.x.toFixed(3),vx:P&&+(P.vx||0).toFixed(3),slip:P&&+(P.slip||0).toFixed(3),cam:{scaleK:+(dm._carScaleK||0).toFixed(3),drawX:dm._carDrawX!=null?+dm._carDrawX.toFixed(2):null,rx:(P&&P._rx!=null)?+P._rx.toFixed(5):null,alpha:+(dm._alpha||0).toFixed(3),roadK:+(dm._carRoadK||0).toFixed(3),orbZ:+(dm._orbitZ||0).toFixed(1),az:+(dm._orbitAz||0).toFixed(3),zoom:+(dm._orbitZoom||0).toFixed(2),oz:+(dm._orbitZ||0).toFixed(2),ox:+(dm._orbitX||0).toFixed(2),lift:+(dm._orbitLift||0).toFixed(2),shot:dm._lastDemoShot},rivals:rivals?rivals.map(function(r){return{id:r._id,spd:~~r.speed,top:~~r.top,lap:r.lap,x:+r.x.toFixed(2),blk:+(r._blockT||0).toFixed(2)};}):[],power2:P&&+P.power.toFixed(1),P:P,seg:seg,demoClock:_demoClock};},
 };
 
 })();
@@ -24502,8 +24668,8 @@ function _detectPadKind(){
     for(var i=0;i<ps.length;i++){
       var p=ps[i]; if(!p||!p.id)continue;
       var id=String(p.id).toLowerCase();
+      if(/xbox|xinput|microsoft|045e/.test(id)){_padKind='xbox';return;}   // before Sony: see padKind()
       if(/dualsense|dualshock|playstation|wireless controller|054c/.test(id)){_padKind='ps';return;}
-      if(/xbox|xinput|045e/.test(id)){_padKind='xbox';return;}
       if(/switch|joy-con|nintendo|057e/.test(id)){_padKind='switch';return;}
     }
   }catch(e){}
@@ -24929,8 +25095,12 @@ function continuePick(i){
 }
 function continueOpen(){
     /* ═══ THE PROMPT DREW IN EVERY MODE BUT WAS ONLY WIRED IN ONE  drawGameOver renders CONTINUE? / YES / NO whenever the wreck animation passes T>0.9 — in every mode. */
+  /* The shell cannot see the engine's `race` (it lives in the engine's own
+     scope), so this check always threw and was swallowed — the prompt was
+     drawn but no direction ever reached it. Read the engine's state. */
   try{
-    if(race&&race.gameOver&&race.over)return true;
+    var st=window.DriveDebug&&window.DriveDebug._state&&window.DriveDebug._state();
+    if(st&&st.gameOver&&st.over)return true;
   }catch(e){}
   return !!(_contSeed&&_contFor===_contSeed);
 }
