@@ -814,9 +814,345 @@ global.WorldTour={
   invalidateSave:invalidateSave, resetProgress:resetProgress, _hash32:hash32,
   unlockBranch:unlockBranch, unlockContinent:unlockContinent, countBranch:countBranch,
   branchHasUnlocked:branchHasUnlocked, branchCompleted:branchCompleted, unlock:unlock,
-  ensureContinentEntries:ensureContinentEntries, continentEntryId:continentEntryId
+  ensureContinentEntries:ensureContinentEntries, continentEntryId:continentEntryId,
+  /* Explicitly unlocked settlement ids (Tour Progression picks featured towns from these). */
+  unlockedIds:function(){ return Object.keys(loadSave().unlocked||{}); }
 };
 
+})(typeof window!=='undefined'?window:globalThis);
+
+/*
+   TOUR PROGRESSION   (plan part 2 — docs/ENGINE_AND_PROGRESSION_PLAN.md)
+   ---------------------------------------------------------------------------
+   81,742 towns is a problem of SAMENESS, not of size: without landmarks the
+   hundredth race feels like the first. This module gives the world landmarks
+   and gives the player reasons to go and find them, without adding or
+   removing a single track:
+
+     SIGNATURES  ~40% of municipalities keep a local racing tradition (one of
+                 24): GLACIER MILE races on ice, SKYWAY floats over the sky,
+                 BANKED BOWL banks every bend, NEON NIGHTS races after dark.
+                 Every town in the municipality carries it — generator
+                 overrides, a palette, a time of day — so a PLACE is
+                 remembered, not a seed.
+     LEGENDS     1 town in ~211 is a LEGEND: an absurd, maximal track in a
+                 legendary palette. Hidden on the map (a faint sparkle) until
+                 a rumour, a Legend Compass or a Mystery Crate reveals it.
+     PASSPORT    Winning in a tradition's municipality stamps it. Milestones
+                 (3/6/10/15/20/24 stamps) pay out and unlock Tour Stock.
+     STREAKS     Consecutive wins raise a multiplier to x2.0; a loss resets it.
+     FEATURED    Three unlocked towns a day pay double and drop a crate.
+     RUMOURS     A third of wins reveal something nearby: a legend's town, or
+                 a tradition not yet stamped. The map marks it until visited.
+     TOUR STOCK  A shop tab that grows with the passport: turbo canisters,
+                 credit magnets, legend compasses, mystery crates.
+
+   Everything about the world (which town is what) is a pure function of the
+   town's id, exactly like the rest of the World Tour; only the player's
+   progress is saved.
+    */
+(function(global){
+'use strict';
+var W=global.WorldTour; if(!W)return;
+var h32=W._hash32;
+var KEY='zs_tour_progress_v1';
+
+/* The 24 traditions. `algo` are generator overrides (the same keys the Super
+   Racing edit tile uses), `tod` a time of day (0.5 noon, 0.76 golden hour,
+   0.95 night). */
+var SIGS=[
+ {id:'glacier',  name:'GLACIER MILE',     col:'#aee8ff', desc:'Frozen roads. Plan the line; the ice will not forgive.',
+  algo:{_forceBiome:'glacier',_surfaceOdds:1,_surfaceShare:0.42,_forceSurface:'ice',_forceFeat:['icerink']}},
+ {id:'skyway',   name:'SKYWAY',           col:'#6af0ff', desc:'The road leaves the ground and runs over open sky.',
+  algo:{_skyHighwayOdds:1,_forceFeat:['skyhighway'],_feat_skyhighway:6}},
+ {id:'bowl',     name:'BANKED BOWL',      col:'#ffb347', desc:'Every long bend is banked. Keep it pinned.',
+  algo:{_bankOdds:0.95,_bankAmount:1.05,_forceFeat:['bankedoval'],_feat_bankedoval:6}},
+ {id:'neon',     name:'NEON NIGHTS',      col:'#ff4fd8', desc:'Racing after midnight under the city glow.',
+  algo:{_forceBiome:'neon',_forceNight:1}, tod:0.95},
+ {id:'dust',     name:'DUST DEVILS',      col:'#e8b060', desc:'Sandstorms and sand on the racing line.',
+  algo:{_forceBiome:'desert',_sandOdds:1,_stormForce:0.8,_surfaceOdds:1,_surfaceShare:0.3,_forceSurface:'sand'}},
+ {id:'canyon',   name:'CANYON KINGS',     col:'#d07040', desc:'Sheer drops and climbs through red rock.',
+  algo:{_forceBiome:'canyon',_forceFeat:['plunge','climb','cliffdrop']}},
+ {id:'rainbow',  name:'RAINBOW RUN',      col:'#ff9ad0', desc:'Candy colours, no guard rails, no mercy.',
+  algo:{_forceTheme:'PASTEL DRIFT',_forceFeat:['rainbowroad','rollerwave']}},
+ {id:'storm',    name:'STORM CHASERS',    col:'#7a9ab8', desc:'The worst weather in the world, by choice.',
+  algo:{_rainOdds:1,_stormForce:1}},
+ {id:'golden',   name:'GOLDEN HOUR',      col:'#ffcf6a', desc:'Every race here starts as the sun goes down.',
+  algo:{}, tod:0.76},
+ {id:'midnight', name:'MIDNIGHT RUN',     col:'#6a5aff', desc:'Headlights only.',
+  algo:{_forceNight:1}, tod:0.97},
+ {id:'lakes',    name:'FROZEN LAKES',     col:'#dff6ff', desc:'Snowfall over black ice.',
+  algo:{_forceBiome:'arctic',_snowOdds:1,_surfaceOdds:1,_surfaceShare:0.5,_forceSurface:'ice'}},
+ {id:'lava',     name:'LAVA FIELDS',      col:'#ff5a1f', desc:'Roads laid across cooling lava crust.',
+  algo:{_forceBiome:'volcano',_surfaceOdds:1,_surfaceShare:0.35,_forceSurface:'lava'}},
+ {id:'corkscrew',name:'CORKSCREW VALLEY', col:'#9aff6a', desc:'Helixes and loops, one after another.',
+  algo:{_forceFeat:['corkscrew','verticalloop'],_feat_corkscrew:8,_feat_verticalloop:5}},
+ {id:'tunnels',  name:'TUNNEL TOWN',      col:'#9a9ab8', desc:'Half the lap is underground.',
+  algo:{_forceFeat:['tunnel','underpass'],_feat_tunnel:9}},
+ {id:'chrome',   name:'CHROME CITY',      col:'#c8d8e8', desc:'Steel grating streets between the towers.',
+  algo:{_forceBiome:'city',_surfaceOdds:1,_surfaceShare:0.35,_forceSurface:'metal'}},
+ {id:'ghost',    name:'GHOST TOWN',       col:'#a070ff', desc:'Something moves in the dead trees.',
+  algo:{_forceBiome:'haunted',_forceNight:1}, tod:0.9},
+ {id:'aurora',   name:'AURORA ROAD',      col:'#60ffb0', desc:'Northern lights over the tundra.',
+  algo:{_forceBiome:'tundra',_forceNight:1,_snowOdds:1}, tod:0.93},
+ {id:'rally',    name:'JUNGLE RALLY',     col:'#2ad06a', desc:'Mud, kinks and crests under the canopy.',
+  algo:{_forceBiome:'jungle',_surfaceOdds:1,_surfaceShare:0.4,_forceSurface:'dirt',_forceFeat:['dirtrally']}},
+ {id:'sandsea',  name:'SAND SEA',         col:'#f0d890', desc:'Dunes to the horizon, sand underfoot.',
+  algo:{_forceBiome:'desert',_surfaceOdds:1,_surfaceShare:0.5,_forceSurface:'sand'}},
+ {id:'absurd',   name:'ABSURDIA',         col:'#ff2a6a', desc:'Local planning permission was never sought.',
+  algo:{_absurdOdds:1,_forceFeat:['zigzagstorm','turbotornado','spiralstair','blindsnap']}},
+ {id:'speed',    name:'SPEED TEMPLE',     col:'#ffe14a', desc:'Long straights, few corners, flat out.',
+  algo:{straightBias:6,curveBias:0.45,boostDensity:6,_forceFeat:['straightaway','openrun']}},
+ {id:'trials',   name:'TECHNICAL TRIALS', col:'#6ad0ff', desc:'Hairpins and chicanes. Brakes matter here.',
+  algo:{curveBias:5.5,technicality:4,_forceFeat:['hairpin','chicanewall']}},
+ {id:'islands',  name:'ISLAND HOPPERS',   col:'#40e0d0', desc:'Bridges and jumps between the islands.',
+  algo:{_forceBiome:'islands',_forceFeat:['bridge','airgap']}},
+ {id:'fog',      name:'FOG VALLEY',       col:'#b8c0c8', desc:'You will hear the corner before you see it.',
+  algo:{_fogOdds:1,_fogDensity:1.6}}
+];
+var LEGEND_PALETTES=['PASTEL DRIFT','SYNTHWAVE GRID','GOLD CIRCUIT','INFERNO CORE','CYBER VIOLET','AURORA DRIFT'];
+var LEGEND_FEATS=['cliffdrop','rollerwave','skyhighway','slingshot','spiralstair','blindsnap','zigzagstorm','turbotornado','bankedoval','verticalloop'];
+var MILESTONES=[[3,5000,'TOUR STOCK: LEGEND COMPASS'],[6,12000,'TOUR STOCK: MYSTERY CRATE'],[10,30000,'TOUR STOCK: GOLDEN TICKET'],
+                [15,60000,'TITLE: GLOBETROTTER'],[20,120000,'TITLE: TOUR VETERAN'],[24,250000,'TITLE: MASTER OF TRADITIONS']];
+/* Tour Stock: `need` is the number of passport stamps that unlocks it. */
+var STOCK=[
+ {id:'canister',name:'TURBO CANISTER', cost:1500, need:0, desc:'+1 turbo charge at the start of your next race.'},
+ {id:'magnet',  name:'CREDIT MAGNET',  cost:4000, need:0, desc:'Your next 3 wins pay x1.5 credits.'},
+ {id:'compass', name:'LEGEND COMPASS', cost:12000,need:3, desc:'Reveals the nearest hidden legend.'},
+ {id:'crate',   name:'MYSTERY CRATE',  cost:6000, need:6, desc:'Credits, a legend or a tradition. Who knows?'},
+ {id:'ticket',  name:'GOLDEN TICKET',  cost:25000,need:10,desc:'Your next win counts as featured (x2, crate).'}
+];
+
+var _s=null;
+function load(){
+  if(_s)return _s;
+  try{ var r=localStorage.getItem(KEY); _s=r?JSON.parse(r):null; }catch(e){ _s=null; }
+  if(!_s||typeof _s!=='object')_s={};
+  var d={stamps:{},seen:{},revealed:{},legendsWon:{},streak:0,bestStreak:0,rumours:[],
+         stock:{},magnetLeft:0,ticket:0,milestones:{},titles:[],featDay:'',featIds:[],featDone:{},wins:0};
+  for(var k in d)if(_s[k]==null)_s[k]=d[k];
+  return _s;
+}
+function save(){ try{ localStorage.setItem(KEY,JSON.stringify(_s)); }catch(e){} }
+function reset(){ _s=null; try{ localStorage.removeItem(KEY); }catch(e){} }
+
+function parts(id){ var p=String(id).split('/'); return {
+  cont:p[0], country:p.slice(0,2).join('/'), state:p.slice(0,3).join('/'), muni:p.slice(0,4).join('/') }; }
+function sigFor(muniId){
+  if(!muniId)return null;
+  var h=h32(muniId+':sig');
+  if(h%100>=40)return null;
+  return SIGS[(h>>>7)%SIGS.length];
+}
+function isLegend(stId){ return (h32(String(stId)+':legend')%211)===0; }
+function nameOfMuni(muniId){
+  try{ var st=parts(muniId+'/x').state; var ms=W.municipalitiesOf(st);
+    for(var i=0;i<ms.length;i++)if(ms[i].id===muniId)return ms[i].name; }catch(e){}
+  return 'A DISTANT MUNICIPALITY';
+}
+function nameOfState(stateId){
+  try{ var co=parts(stateId+'/x/x').country; var ss=W.statesOf(co);
+    for(var i=0;i<ss.length;i++)if(ss[i].id===stateId)return ss[i].name; }catch(e){}
+  return 'A FAR STATE';
+}
+
+/* Race options for a settlement: its tradition and, if it is one, its legend. */
+function raceOpts(st){
+  if(!st||!st.id)return null;
+  var muni=st.parent||parts(st.id).muni, sig=sigFor(muni), leg=isLegend(st.id);
+  if(!sig&&!leg)return null;
+  var algo={}, tod=null, k;
+  if(sig){ for(k in sig.algo)algo[k]=sig.algo[k]; if(sig.tod!=null)tod=sig.tod; }
+  if(leg){
+    var h=h32(st.id+':lg');
+    algo._absurdOdds=1; algo._bankOdds=0.7; algo._skyHighwayOdds=0.7;
+    algo._forceTheme=LEGEND_PALETTES[h%LEGEND_PALETTES.length];
+    var ff=(algo._forceFeat||[]).slice();
+    for(var i=0;i<4;i++){ var f=LEGEND_FEATS[(h>>>(i*5))%LEGEND_FEATS.length]; if(ff.indexOf(f)<0)ff.push(f); }
+    algo._forceFeat=ff;
+    if(tod==null)tod=[0.5,0.76,0.95][(h>>>20)%3];
+  }
+  return {algo:algo, tod:tod, legend:leg, sig:sig?sig.id:null};
+}
+
+/* ── FEATURED TOWNS: three a day from the player's unlocked towns. */
+function dayKey(){ var d=new Date(); return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate(); }
+function featuredIds(){
+  var s=load(), key=dayKey();
+  if(s.featDay===key&&s.featIds&&s.featIds.length)return s.featIds;
+  var ids=[]; try{ ids=(W.unlockedIds?W.unlockedIds():[]).slice(); }catch(e){}
+  ids.sort();
+  var out=[], h=h32('featured:'+key);
+  for(var i=0;i<ids.length&&out.length<3;i++){
+    var c=ids[(h+i*2654435761)%ids.length>>>0];
+    if(c&&out.indexOf(c)<0)out.push(c);
+  }
+  s.featDay=key; s.featIds=out; s.featDone={}; save();
+  return out;
+}
+function isFeatured(stId){ return featuredIds().indexOf(stId)>=0&&!load().featDone[stId]; }
+
+/* ── DISCOVERY: find hidden legends / unstamped traditions near a town. */
+function settlementsIn(prefixId,level){
+  var out=[];
+  try{
+    var states=(level==='country')?W.statesOf(prefixId):null;
+    var countries=(level==='cont')?W.countriesOf(prefixId):null;
+    var addState=function(stId){ var ms=W.municipalitiesOf(stId);
+      for(var i=0;i<ms.length;i++){ var ts=W.settlementsOf(ms[i].id); for(var j=0;j<ts.length;j++)out.push(ts[j]); } };
+    if(states)for(var a=0;a<states.length;a++)addState(states[a].id);
+    if(countries)for(var b=0;b<countries.length;b++){ var ss=W.statesOf(countries[b].id); for(var c=0;c<ss.length;c++)addState(ss[c].id); }
+  }catch(e){}
+  return out;
+}
+function nearestHiddenLegend(fromId){
+  var s=load(), P=parts(fromId);
+  var pools=[settlementsIn(P.country,'country'),settlementsIn(P.cont,'cont')];
+  for(var p=0;p<pools.length;p++){
+    var best=null;
+    for(var i=0;i<pools[p].length;i++){ var t=pools[p][i];
+      if(isLegend(t.id)&&!s.revealed[t.id]&&!s.legendsWon[t.id]){ best=t; if(t.id.indexOf(P.state)===0)break; } }
+    if(best)return best;
+  }
+  return null;
+}
+function revealLegend(t){
+  var s=load(); s.revealed[t.id]=1;
+  var P=parts(t.id);
+  var txt='RUMOUR · A LEGEND WAITS IN '+nameOfMuni(P.muni).toUpperCase()+', '+nameOfState(P.state).toUpperCase();
+  s.rumours.unshift({id:t.id,muni:P.muni,text:txt}); s.rumours=s.rumours.slice(0,12); save();
+  return txt;
+}
+function revealTradition(fromId){
+  var s=load(), P=parts(fromId);
+  try{
+    var ms=W.municipalitiesOf(P.state);
+    for(var i=0;i<ms.length;i++){ var g=sigFor(ms[i].id);
+      if(g&&!s.stamps[g.id]&&ms[i].id!==P.muni){
+        s.seen[g.id]=1;
+        var txt='RUMOUR · THE '+g.name+' TRADITION LIVES IN '+String(ms[i].name).toUpperCase();
+        s.rumours.unshift({muni:ms[i].id,text:txt,sig:g.id}); s.rumours=s.rumours.slice(0,12); save();
+        return txt; }
+    }
+  }catch(e){}
+  return null;
+}
+function rumourAt(muniId){ var r=load().rumours; for(var i=0;i<r.length;i++)if(r[i].muni===muniId)return r[i]; return null; }
+function visitMuni(muniId){
+  var g=sigFor(muniId), s=load(), ch=false;
+  if(g&&!s.seen[g.id]){ s.seen[g.id]=1; ch=true; }
+  var before=s.rumours.length;
+  s.rumours=s.rumours.filter(function(r){ return !(r.muni===muniId&&!r.id); });
+  if(ch||s.rumours.length!==before)save();
+  return g;
+}
+
+function addCredits(n){ try{ if(n>0&&global.UpgradeShop)global.UpgradeShop.addCredits(Math.round(n)); }catch(e){} }
+function stampCount(){ return Object.keys(load().stamps).length; }
+
+/* ── THE RESULT: returns the events the victory screen animates. */
+function onWin(st,baseCredits){
+  var s=load(), ev=[], P=parts(st.id), total=0, base=Math.max(0,baseCredits||0);
+  s.wins++;
+  s.streak++; if(s.streak>s.bestStreak)s.bestStreak=s.streak;
+  var mult=1+Math.min(1,(s.streak-1)*0.1);
+  if(s.streak>=2){ var sb=Math.round(base*(mult-1)); total+=sb; ev.push({kind:'streak',streak:s.streak,mult:mult,bonus:sb}); }
+  var feat=isFeatured(st.id)||s.ticket>0;
+  if(feat){
+    if(s.ticket>0&&!isFeatured(st.id))s.ticket--;
+    s.featDone[st.id]=1; total+=base; s.stock.crate=(s.stock.crate||0)+1;
+    ev.push({kind:'featured',bonus:base});
+  }
+  if(s.magnetLeft>0){ s.magnetLeft--; var mb=Math.round(base*0.5); total+=mb; ev.push({kind:'magnet',bonus:mb,left:s.magnetLeft}); }
+  var g=sigFor(P.muni);
+  if(g){ s.seen[g.id]=1;
+    if(!s.stamps[g.id]){ s.stamps[g.id]=Date.now(); var n=stampCount();
+      ev.push({kind:'stamp',sig:g,n:n,of:SIGS.length});
+      for(var m=0;m<MILESTONES.length;m++){ var M=MILESTONES[m];
+        if(n>=M[0]&&!s.milestones[M[0]]){ s.milestones[M[0]]=1; total+=M[1];
+          if(/^TITLE: /.test(M[2]))s.titles.push(M[2].slice(7));
+          ev.push({kind:'milestone',text:M[2],bonus:M[1],at:M[0]}); } } } }
+  if(isLegend(st.id)&&!s.legendsWon[st.id]){
+    s.legendsWon[st.id]=1; s.revealed[st.id]=1; total+=50000;
+    ev.push({kind:'legend',bonus:50000,count:Object.keys(s.legendsWon).length});
+  }
+  s.rumours=s.rumours.filter(function(r){ return r.id!==st.id&&r.muni!==P.muni; });
+  /* A third of wins (and every legend) whisper about something nearby. */
+  var rr=h32(st.id+':rum:'+s.wins)%100;
+  if(rr<34||isLegend(st.id)){
+    var txt=null;
+    if(rr%2===0){ var L=nearestHiddenLegend(st.id); if(L)txt=revealLegend(L); }
+    if(!txt)txt=revealTradition(st.id);
+    if(txt)ev.push({kind:'rumour',text:txt});
+  }
+  save();
+  addCredits(total);
+  ev.total=total+base; ev.base=base;
+  return ev;
+}
+function onLoss(){
+  var s=load(), was=s.streak; s.streak=0; save();
+  return was>=3?[{kind:'streakLost',streak:was}]:[];
+}
+
+/* ── MAP DECORATION */
+function markerInfo(st){
+  var s=load(), P=parts(st.id), g=sigFor(st.parent||P.muni), leg=isLegend(st.id);
+  return {sig:g, legend:leg?(s.legendsWon[st.id]?'won':(s.revealed[st.id]?'revealed':'hidden')):null,
+          featured:isFeatured(st.id), rumour:!!(leg&&s.revealed[st.id]&&!s.legendsWon[st.id])};
+}
+function status(){
+  var s=load();
+  return {stamps:stampCount(),of:SIGS.length,legends:Object.keys(s.legendsWon).length,
+          revealed:Object.keys(s.revealed).length,streak:s.streak,bestStreak:s.bestStreak,
+          mult:1+Math.min(1,Math.max(0,s.streak)*0.1),featured:featuredIds().filter(function(id){return !s.featDone[id];}).length,
+          rumours:s.rumours.slice(0,5),titles:s.titles.slice()};
+}
+
+/* ── TOUR STOCK */
+function stockOpen(item){ return stampCount()>=item.need; }
+function credits(){ try{ return global.UpgradeShop?global.UpgradeShop.credits():0; }catch(e){ return 0; } }
+function spend(n){ try{ return !!(global.UpgradeShop&&global.UpgradeShop.spendCredits&&global.UpgradeShop.spendCredits(n)); }catch(e){} return false; }
+function buy(id,fromId){
+  var it=null; for(var i=0;i<STOCK.length;i++)if(STOCK[i].id===id)it=STOCK[i];
+  if(!it)return 'UNKNOWN';
+  if(!stockOpen(it))return 'NEEDS '+it.need+' STAMPS';
+  if(!spend(it.cost))return 'NOT ENOUGH CREDITS';
+  var s=load();
+  if(id==='magnet')s.magnetLeft+=3;
+  else if(id==='ticket')s.ticket++;
+  else s.stock[id]=(s.stock[id]||0)+1;
+  save();
+  if(id==='compass')return useCompass(fromId)||'NO HIDDEN LEGEND NEARBY';
+  if(id==='crate')return openCrate(fromId);
+  return it.name+' BOUGHT';
+}
+function consume(id){ var s=load(); if((s.stock[id]||0)>0){ s.stock[id]--; save(); return true; } return false; }
+function useCompass(fromId){
+  if(!consume('compass'))return null;
+  var from=fromId||(W.homeSettlement&&W.homeSettlement()&&W.homeSettlement().id);
+  var L=from?nearestHiddenLegend(from):null;
+  return L?revealLegend(L):null;
+}
+function openCrate(fromId){
+  if(!consume('crate'))return null;
+  var s=load(), roll=h32('crate:'+s.wins+':'+Date.now())%100;
+  var from=fromId||(W.homeSettlement&&W.homeSettlement()&&W.homeSettlement().id);
+  if(roll<25&&from){ var L=nearestHiddenLegend(from); if(L)return 'CRATE · '+revealLegend(L); }
+  if(roll<50&&from){ var t=revealTradition(from); if(t)return 'CRATE · '+t; }
+  var amt=2000+(roll*337)%28000; addCredits(amt);
+  return 'CRATE · +'+amt.toLocaleString()+' CR';
+}
+function turboBonus(){ return consume('canister')?1:0; }
+
+global.TourProgress={
+  SIGS:SIGS, STOCK:STOCK, MILESTONES:MILESTONES,
+  sigFor:sigFor, isLegend:isLegend, isFeatured:isFeatured, featuredIds:featuredIds,
+  raceOpts:raceOpts, onWin:onWin, onLoss:onLoss, markerInfo:markerInfo, status:status,
+  visitMuni:visitMuni, rumourAt:rumourAt, buy:buy, stockOpen:stockOpen, turboBonus:turboBonus,
+  stampCount:stampCount, load:load, reset:reset, parts:parts, credits:credits,
+  _nearestHiddenLegend:nearestHiddenLegend
+};
 })(typeof window!=='undefined'?window:globalThis);
 
 /* NOTE: this WorldTour module was present THREE times in this file, byte for
@@ -1749,6 +2085,35 @@ function drawSettlement(ctx,st,cx,cy,rad,selD,pulse,idx){
   ctx.fillStyle=done?'#39ff14':(open?'#ffd23a':'#33424e');
   ctx.fill();
   if(done){ctx.shadowColor='#39ff14';ctx.shadowBlur=10;ctx.fill();ctx.shadowBlur=0;}
+  /* TOUR PROGRESSION markers: tradition ring, legends, featured towns. */
+  try{
+    var TPm=global.TourProgress, mi=TPm?TPm.markerInfo(st):null, tt=MapState._t;
+    if(mi){
+      if(mi.sig){ ctx.beginPath(); ctx.arc(cx,cy,r*1.32,0,Math.PI*2);
+        ctx.strokeStyle=mi.sig.col; ctx.globalAlpha=0.85; ctx.lineWidth=Math.max(1.5,r*0.16); ctx.stroke(); ctx.globalAlpha=1; }
+      if(mi.legend==='revealed'||mi.legend==='won'){
+        ctx.save(); ctx.translate(cx,cy); ctx.rotate(tt*0.8);
+        for(var sp=0;sp<8;sp++){ ctx.rotate(Math.PI/4);
+          ctx.fillStyle=mi.legend==='won'?'#ffd23a':'hsl('+((tt*90+sp*45)%360|0)+',90%,62%)';
+          ctx.beginPath(); ctx.moveTo(r*1.45,0); ctx.lineTo(r*2.25,-r*0.18); ctx.lineTo(r*2.25,r*0.18); ctx.closePath(); ctx.fill(); }
+        ctx.restore();
+        ctx.font=Math.max(6,Math.round(r*0.55))+"px 'Press Start 2P',monospace"; ctx.textAlign='center';
+        ctx.fillStyle='#ffd23a'; ctx.fillText(mi.legend==='won'?'LEGEND \u2713':'LEGEND',cx,cy-r*2.9);
+      } else if(mi.legend==='hidden'){
+        var tw2=(tt*0.33+(cx*0.013))%1;           // a brief twinkle every few seconds
+        if(tw2<0.12){ var a2=Math.sin(tw2/0.12*Math.PI); ctx.strokeStyle='rgba(255,240,180,'+(0.8*a2).toFixed(2)+')';
+          ctx.lineWidth=1.5; ctx.beginPath(); ctx.moveTo(cx-r*1.8*a2,cy); ctx.lineTo(cx+r*1.8*a2,cy);
+          ctx.moveTo(cx,cy-r*1.8*a2); ctx.lineTo(cx,cy+r*1.8*a2); ctx.stroke(); }
+      }
+      if(mi.featured){ var fy2=cy-r*2.1-Math.sin(tt*3)*2, fr=Math.max(4,r*0.55);
+        ctx.fillStyle='#ffd23a'; ctx.beginPath();
+        for(var k2=0;k2<10;k2++){ var ang=-Math.PI/2+k2*Math.PI/5, rr2=(k2%2)?fr*0.45:fr;
+          ctx.lineTo(cx+Math.cos(ang)*rr2,fy2+Math.sin(ang)*rr2); }
+        ctx.closePath(); ctx.fill();
+        ctx.font=Math.max(5,Math.round(fr*0.9))+"px 'Press Start 2P',monospace"; ctx.textAlign='left';
+        ctx.fillText('x2',cx+fr*1.2,fy2); }
+    }
+  }catch(e){}
 
   /* Larger settlements carry their lap count inside the dot. */
   if(r>9&&st.race&&st.race.laps>=3){
@@ -1898,6 +2263,32 @@ function drawHud(ctx,vw,vh){
       (W.isCompleted(it.id)?'   \u2713 WON':(W.isUnlocked(it.id)?'':'   LOCKED')),116,vh-122);
   }
 
+  /* TOUR PROGRESSION: the municipality's tradition, and the passport strip. */
+  try{
+    var TPh=global.TourProgress;
+    if(TPh){
+      if(MapState.level==='muni'&&MapState.path.length){
+        var muniId=MapState.path[MapState.path.length-1].id, g=TPh.visitMuni(muniId);
+        if(g){
+          var by=Math.round(vh*0.13), txt2='TRADITION \u00b7 '+g.name+'  \u2014  '+g.desc;
+          ctx.font="10px 'Press Start 2P',monospace"; ctx.textAlign='center'; ctx.textBaseline='middle';
+          var bw2=ctx.measureText(txt2).width+30, pls=0.6+0.4*Math.sin(MapState._t*2.2);
+          ctx.fillStyle='rgba(0,8,16,0.82)'; ctx.fillRect(vw/2-bw2/2,by-13,bw2,26);
+          ctx.strokeStyle=g.col; ctx.globalAlpha=pls; ctx.lineWidth=2; ctx.strokeRect(vw/2-bw2/2,by-13,bw2,26); ctx.globalAlpha=1;
+          ctx.fillStyle=g.col; ctx.fillText(txt2,vw/2,by);
+        }
+      }
+      var S2=TPh.status();
+      var strip='PASSPORT '+S2.stamps+'/'+S2.of+'   LEGENDS '+S2.legends+'   STREAK x'+S2.mult.toFixed(1)+'   \u2605 '+S2.featured+' FEATURED TODAY';
+      ctx.font="8px 'Press Start 2P',monospace"; ctx.textAlign='left'; ctx.textBaseline='middle';
+      var sw2=ctx.measureText(strip).width+20, sy2=vh-200;   // above the selected-town details
+      ctx.fillStyle='rgba(0,8,16,0.78)'; ctx.fillRect(112,sy2-10,sw2,20);
+      ctx.fillStyle='#ffd23a'; ctx.fillText(strip,122,sy2);
+      if(S2.rumours&&S2.rumours.length){
+        ctx.fillStyle='#7fd0ff'; ctx.fillText('! '+S2.rumours[0].text,122,sy2-22);
+      }
+    }
+  }catch(e){}
   ctx.textAlign='center';
   ctx.fillStyle='#4a6a80';
   /* (1) Control hints removed: they sat over the checkerboard border. */
@@ -2671,6 +3062,8 @@ function credits(){ return load().credits; }
 /* Math.round, not |0: the bitwise OR truncates to 32 bits, so any grant above
    ~2.1 billion wrapped negative and silently removed credits. */
 function addCredits(n){ var s=load(); s.credits+=Math.max(0,Math.round(n)||0); save(); return s.credits; }
+/* Spend credits outside the perk grid (Tour Stock). All-or-nothing. */
+function spendCredits(n){ var s=load(); n=Math.max(0,Math.round(n)||0); if(s.credits<n)return false; s.credits-=n; save(); return true; }
 function owns(id){ return !!load().owned[id]; }
 /* (4) Everything the player has bought here, for the Rewards Archive. The
    archive only read WorldRewards, so perks, specials and machine upgrades —
@@ -3080,7 +3473,7 @@ function resetMachine(){
    shoulder buttons. The archive was a separate screen reached from the map,
    which meant two places to remember; it belongs beside the thing it explains
    the currency for. */
-var TABS=['UPGRADE SHOP','REWARDS ARCHIVE'];
+var TABS=['UPGRADE SHOP','REWARDS ARCHIVE','TOUR PASSPORT'];
 function _tabLabel(){ return TABS[Shop.tab]||TABS[0]; }
 function nextTab(d){
   Shop.tab=(Shop.tab+d+TABS.length)%TABS.length;
@@ -3102,6 +3495,65 @@ function openShop(){
 }
 function closeShop(){ Shop.open=false; }
 
+/* ═══ TOUR PASSPORT TAB (plan part 2): the 24 traditions as stamps (a
+   tradition's name stays hidden until a rumour or a visit reveals it), the
+   player's legends / streak / featured towns, the next milestone, and the
+   Tour Stock that grows with the passport. */
+function drawTourTab(ctx,vw,vh,dt,top){
+  var TP=global.TourProgress; if(!TP)return;
+  var S=TP.status(), sv=TP.load(), SIG=TP.SIGS;
+  var L=vw*0.05, gw=vw*0.52, cols=6, cw=gw/cols, rows=Math.ceil(SIG.length/cols), chh=Math.min(cw*0.9,(vh-top-80)/rows);
+  ctx.save(); ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.font="11px 'Germania One',serif"; ctx.fillStyle='#bfe8ff';
+  ctx.fillText('PASSPORT  \u00b7  '+S.stamps+' / '+S.of+' TRADITIONS',L+gw/2,top);
+  for(var i=0;i<SIG.length;i++){
+    var g=SIG[i], cx=L+(i%cols+0.5)*cw, cy=top+22+(Math.floor(i/cols)+0.5)*chh, R=Math.min(cw,chh)*0.36;
+    var stamped=!!sv.stamps[g.id], seen=!!sv.seen[g.id];
+    ctx.beginPath(); ctx.arc(cx,cy,R,0,Math.PI*2);
+    ctx.fillStyle=stamped?'rgba(0,0,0,0.35)':'rgba(10,20,30,0.6)'; ctx.fill();
+    ctx.lineWidth=stamped?3:1.2; ctx.strokeStyle=stamped?g.col:(seen?'rgba(160,190,210,0.6)':'rgba(70,90,110,0.5)'); ctx.stroke();
+    if(stamped){ ctx.save(); ctx.translate(cx,cy); ctx.rotate(-0.2+Math.sin(Shop.t*1.3+i)*0.03);
+      ctx.fillStyle=g.col; ctx.font=Math.max(6,Math.round(R*0.30))+"px 'Germania One',serif";
+      var ws=g.name.split(' '); for(var w=0;w<ws.length;w++)ctx.fillText(ws[w],0,(w-(ws.length-1)/2)*R*0.36); ctx.restore(); }
+    else { ctx.fillStyle=seen?'#8fa8b8':'#4a5a66'; ctx.font=Math.max(5,Math.round(R*(seen?0.22:0.5)))+"px 'Press Start 2P',monospace";
+      if(seen){ var ws2=g.name.split(' '); for(var w2=0;w2<ws2.length;w2++)ctx.fillText(ws2[w2],cx,cy+(w2-(ws2.length-1)/2)*R*0.32); }
+      else ctx.fillText('?',cx,cy); }
+  }
+  /* right column: career + milestones + stock */
+  var RX=vw*0.62, RW=vw*0.33, y=top;
+  ctx.textAlign='left'; ctx.font="9px 'Press Start 2P',monospace";
+  var lines=[['LEGENDS CONQUERED',String(S.legends),'#ffd23a'],['LEGENDS REVEALED',String(S.revealed),'#ffe98a'],
+             ['WIN STREAK',S.streak+'  (BEST '+S.bestStreak+')  x'+S.mult.toFixed(1),'#ff9a3a'],
+             ['FEATURED TODAY',S.featured+' TOWN'+(S.featured===1?'':'S')+' \u00b7 x2','#ffd23a']];
+  for(var j=0;j<lines.length;j++){ ctx.fillStyle='#6f8fa0'; ctx.fillText(lines[j][0],RX,y); ctx.fillStyle=lines[j][2]; ctx.textAlign='right'; ctx.fillText(lines[j][1],RX+RW,y); ctx.textAlign='left'; y+=18; }
+  var nextM=null; for(var m=0;m<TP.MILESTONES.length;m++)if(S.stamps<TP.MILESTONES[m][0]){nextM=TP.MILESTONES[m];break;}
+  y+=6;
+  if(nextM){ var prev=0; for(var m2=0;m2<TP.MILESTONES.length;m2++)if(TP.MILESTONES[m2][0]<=S.stamps)prev=TP.MILESTONES[m2][0];
+    var pk=(S.stamps-prev)/Math.max(1,nextM[0]-prev);
+    ctx.fillStyle='#8fa8b8'; ctx.fillText('NEXT MILESTONE \u00b7 '+nextM[0]+' STAMPS \u00b7 +'+nextM[1].toLocaleString()+' CR',RX,y); y+=12;
+    ctx.fillStyle='rgba(255,255,255,0.08)'; ctx.fillRect(RX,y,RW,8);
+    var gl=0.6+0.4*Math.sin(Shop.t*4); ctx.fillStyle='rgba(255,210,58,'+gl.toFixed(2)+')'; ctx.fillRect(RX,y,RW*pk,8); y+=14;
+    ctx.fillStyle='#ffe98a'; ctx.fillText(nextM[2],RX,y); y+=20;
+  } else { ctx.fillStyle='#39ff14'; ctx.fillText('EVERY TRADITION STAMPED',RX,y); y+=24; }
+  ctx.font="11px 'Germania One',serif"; ctx.fillStyle='#bfe8ff'; ctx.fillText('TOUR STOCK',RX,y); y+=18;
+  var STK=TP.STOCK, cr=TP.credits();
+  for(var k=0;k<STK.length;k++){
+    var it=STK[k], open=TP.stockOpen(it), sel=(k===(Shop.tsel|0)), rh=Math.max(34,Math.min(46,(vh-y-40)/STK.length));
+    var flashK=(sel&&Shop.tbuyT!=null)?Math.max(0,1-(Shop.t-Shop.tbuyT)*2.5):0;
+    ctx.fillStyle=flashK>0?(Shop.tbuyOk?'rgba(57,255,20,'+(0.25*flashK).toFixed(2)+')':'rgba(255,80,60,'+(0.25*flashK).toFixed(2)+')'):(sel?'rgba(30,60,90,0.8)':'rgba(8,18,28,0.75)');
+    ctx.fillRect(RX,y-4,RW,rh-6);
+    if(sel){ ctx.strokeStyle='rgba(127,208,255,'+(0.6+0.4*Math.sin(Shop.t*3.4)).toFixed(2)+')'; ctx.lineWidth=2; ctx.strokeRect(RX,y-4,RW,rh-6); }
+    ctx.font="10px 'Germania One',serif"; ctx.fillStyle=open?(sel?'#ffffff':'#bfe8ff'):'#4a5a66';
+    ctx.fillText(it.name,RX+10,y+6);
+    ctx.textAlign='right'; ctx.fillStyle=!open?'#8a5a5a':(cr>=it.cost?'#ffd23a':'#8a5a5a');
+    ctx.fillText(open?(it.cost.toLocaleString()+' CR'):('\u{1F512} '+it.need+' STAMPS'),RX+RW-10,y+6);
+    ctx.textAlign='left'; ctx.font="7px 'Press Start 2P',monospace"; ctx.fillStyle='#6f8fa0';
+    var have=(it.id==='magnet')?sv.magnetLeft:(it.id==='ticket'?sv.ticket:(sv.stock[it.id]||0));
+    ctx.fillText(it.desc+(have?('   OWNED '+have):''),RX+10,y+20);
+    y+=rh;
+  }
+  ctx.restore();
+}
 /* Grid positions: 3x3 with the car at index 4 (centre). Perks fill the ring in
    reading order, skipping the middle. */
 var RING=[0,1,2,3,5,6,7,8];
@@ -3110,6 +3562,21 @@ function input(btn){
   if(!Shop.open)return false;
   if(btn==='lb'){ nextTab(-1); return true; }
   if(btn==='rb'){ nextTab(1); return true; }
+  /* TOUR PASSPORT tab: up/down choose Tour Stock, A buys. */
+  if(Shop.tab===2){
+    var STK=(global.TourProgress&&global.TourProgress.STOCK)||[];
+    if(btn==='b'){ closeShop(); return true; }
+    if(btn==='up'){ Shop.tsel=((Shop.tsel|0)+STK.length-1)%Math.max(1,STK.length); return true; }
+    if(btn==='down'){ Shop.tsel=((Shop.tsel|0)+1)%Math.max(1,STK.length); return true; }
+    if(btn==='a'&&STK.length){
+      var it2=STK[Shop.tsel|0], from=null;
+      try{ from=(global.WorldTourFlow&&global.WorldTourFlow.flow&&global.WorldTourFlow.flow.settlement&&global.WorldTourFlow.flow.settlement.id)||null; }catch(e){}
+      var msg=global.TourProgress.buy(it2.id,from);
+      flash(msg); Shop.tbuyT=Shop.t; Shop.tbuyOk=!/NOT ENOUGH|NEEDS|UNKNOWN|NO HIDDEN/.test(msg);
+      return true;
+    }
+    return true;
+  }
   /* The archive tab is a read-only view; only tab switching and back apply. */
   if(Shop.tab===1){
     if(btn==='b'){ closeShop(); return true; }
@@ -3290,13 +3757,10 @@ function draw(ctx,vw,vh,dt){
      the side the button would take you toward. */
   ctx.font="7px 'Press Start 2P',monospace";
   ctx.fillStyle='rgba(255,255,255,0.72)';
-  if(Shop.tab===0){
-    ctx.textAlign='right';
-    ctx.fillText('RB \u2192 REWARDS ARCHIVE',vw-76,barY+barH+9);   // (3) 70px left
-  } else {
-    ctx.textAlign='left';
-    ctx.fillText('LB \u2190 UPGRADE SHOP',76,barY+barH+9);         // (3) 70px right
-  }
+  ctx.textAlign='right';
+  ctx.fillText('RB \u2192 '+TABS[(Shop.tab+1)%TABS.length],vw-76,barY+barH+9);
+  ctx.textAlign='left';
+  ctx.fillText('LB \u2190 '+TABS[(Shop.tab+TABS.length-1)%TABS.length],76,barY+barH+9);
   ctx.textAlign='left';
   ctx.textBaseline='top';
 
@@ -3308,6 +3772,15 @@ function draw(ctx,vw,vh,dt){
      fixed gutter between them. */
   /* (3) Archive tab: hand off to worldflow's renderer, which already knows how
      to lay the table out, then stop. The header above is shared. */
+  if(Shop.tab===2){
+    try{ drawTourTab(ctx,vw,vh,dt,barY+barH+22); }catch(e){}
+    ctx.textAlign='center';ctx.textBaseline='top';
+    ctx.font="9px 'Press Start 2P',monospace";
+    ctx.fillStyle='#4a6a80';
+    ctx.fillText('\u25b2\u25bc STOCK     A  BUY     LB / RB  SWITCH TAB     B  BACK',vw/2,vh-20);
+    ctx.restore();
+    return;
+  }
   if(Shop.tab===1){
     try{
       if(global.WorldTourFlow&&global.WorldTourFlow.drawArchiveBody)
@@ -3680,7 +4153,7 @@ function activeEffects(){
 
 global.UpgradeShop={
   state:Shop, open:openShop, close:closeShop, draw:draw, input:input,
-  credits:credits, awardCredits:awardCredits, addCredits:addCredits,
+  credits:credits, awardCredits:awardCredits, addCredits:addCredits, spendCredits:spendCredits,
   inventory:inventory,
   SPECIALS:SPECIALS, specialInStock:specialInStock, specialCount:specialCount,
   buySpecial:buySpecial, consumeSpecial:consumeSpecial,
@@ -3996,10 +4469,14 @@ function beginSettlementRace(){
   Flow.mode='racing';
   var car=(global.GX_selectedCar&&global.GX_selectedCar())||null;
   try{
+    /* TOUR PROGRESSION: the municipality's tradition (or the town's legend)
+       travels with the race; a Turbo Canister from Tour Stock adds a charge. */
+    var TP=global.TourProgress, tour=TP?TP.raceOpts(st):null, extraTurbo=TP?TP.turboBonus():0;
     global.DriveMode.start(st.trackSeed,{
-      worldTour:{laps:st.race.laps,turbo:st.race.turbo,lenMul:st.race.lenMul},
+      worldTour:{laps:st.race.laps,turbo:st.race.turbo+extraTurbo,lenMul:st.race.lenMul},
       settlement:{id:st.id,name:W.displayName(st),type:st.typeLabel,pop:st.population},
-      car:car
+      car:car,
+      tour:tour
     });
   }catch(e){console.warn('World Tour race failed',e);}
   watchResult(st);
@@ -4087,7 +4564,11 @@ function watchResult(st){
           if(global.WorldRewards)Flow.result.rewards=global.WorldRewards.award(st);
           if(global.UpgradeShop)Flow.result.credits=global.UpgradeShop.awardCredits(st);
         }catch(e){}
+        try{ if(global.TourProgress)Flow.result.tour=global.TourProgress.onWin(st,+Flow.result.credits||0); }catch(e){}
+      } else {
+        try{ if(global.TourProgress)Flow.result.tour=global.TourProgress.onLoss(); }catch(e){}
       }
+      Flow._fx=[]; Flow._fxDone={};
     }
     /* Wait for the player to dismiss the standings. The engine clears `over`
        when it exits, which is the signal to show the World Tour summary. */
@@ -4100,6 +4581,113 @@ function watchResult(st){
 /* ── VICTORY SEQUENCE 
    Short by design: the reward is the unlock and the green dot, not a long
    cutscene the player will see hundreds of times. */
+/* ═══ TOUR CELEBRATION (plan part 2) — positive feedback you can feel.
+   A tiny particle system (coins, confetti, sparks) plus timed reveals:
+   the credit total rolls up and bursts into coins, a passport stamp slams
+   down with a shockwave and a screen jolt, a legend lights golden rays,
+   milestones slide in, rumours type themselves out. Each event fires once,
+   so replays of the same screen are calm. */
+function _fxBurst(x,y,n,cols,kind){
+  var F=Flow._fx||(Flow._fx=[]);
+  for(var i=0;i<n&&F.length<420;i++){
+    var a=Math.random()*Math.PI*2, sp=90+Math.random()*260;
+    F.push({x:x,y:y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp-120,life:1,decay:0.5+Math.random()*0.6,
+      col:cols[i%cols.length],size:2+Math.random()*4,rot:Math.random()*6,vr:(Math.random()-0.5)*12,kind:kind});
+  }
+}
+function _fxDraw(ctx,dt){
+  var F=Flow._fx; if(!F||!F.length)return;
+  for(var i=F.length-1;i>=0;i--){
+    var p=F[i]; p.life-=dt*p.decay; if(p.life<=0){F.splice(i,1);continue;}
+    p.vy+=520*dt; p.x+=p.vx*dt; p.y+=p.vy*dt; p.rot+=p.vr*dt;
+    ctx.globalAlpha=Math.min(1,p.life*1.4); ctx.fillStyle=p.col;
+    if(p.kind==='coin'){ ctx.beginPath(); ctx.ellipse(p.x,p.y,p.size*1.3*Math.abs(Math.cos(p.rot)),p.size*1.3,0,0,Math.PI*2); ctx.fill(); }
+    else if(p.kind==='confetti'){ ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.rot); ctx.fillRect(-p.size,-p.size*0.4,p.size*2,p.size*0.8); ctx.restore(); }
+    else { ctx.fillRect(p.x-1,p.y-1,2+p.size*0.4,2+p.size*0.4); }
+  }
+  ctx.globalAlpha=1;
+}
+function _once(key){ var D=Flow._fxDone||(Flow._fxDone={}); if(D[key])return false; D[key]=1; return true; }
+function _easeOutBack(k){ var c=1.9; return 1+(c+1)*Math.pow(k-1,3)+c*Math.pow(k-1,2); }
+function drawTourCelebration(ctx,vw,vh,dt,listY){
+  var r=Flow.result||{}, ev=r.tour||[], T=Flow.t;
+  var legend=null; for(var q=0;q<ev.length;q++)if(ev[q].kind==='legend')legend=ev[q];
+  /* golden rays behind everything for a legend */
+  if(legend&&T>0.2){
+    ctx.save(); ctx.translate(vw/2,vh*0.40); ctx.rotate(T*0.25);
+    var ra=Math.min(1,(T-0.2)/0.8)*0.22;
+    for(var i=0;i<16;i++){ ctx.rotate(Math.PI/8); ctx.fillStyle='rgba(255,210,58,'+ra.toFixed(3)+')';
+      ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(vw,-vw*0.08); ctx.lineTo(vw,vw*0.08); ctx.closePath(); ctx.fill(); }
+    ctx.restore();
+  }
+  /* credit roll-up, left */
+  var totalCr=(ev.total!=null?ev.total:(+r.credits||0))+(+r.consolation||0);
+  if(r.won&&totalCr>0&&T>1.0){
+    var k=Math.min(1,(T-1.0)/1.6), e=1-Math.pow(1-k,3), shown=Math.round(totalCr*e);
+    var lx=vw*0.16, ly=vh*0.42;
+    ctx.save(); ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font="9px 'Press Start 2P',monospace"; ctx.fillStyle='#8fa8b8'; ctx.fillText('CREDITS',lx,ly-26);
+    var pop=k>=1?1+0.12*Math.max(0,1-(T-2.6)*3):1;
+    ctx.font=Math.round(22*pop)+"px 'Germania One','Press Start 2P',serif"; ctx.fillStyle='#ffd23a';
+    ctx.shadowColor='#ffb000'; ctx.shadowBlur=10+8*(pop-1)*8;
+    ctx.fillText('+'+shown.toLocaleString(),lx,ly); ctx.shadowBlur=0;
+    if(k>=1&&_once('coins'))_fxBurst(lx,ly,46,['#ffd23a','#ffe98a','#e0a800'],'coin');
+    ctx.restore();
+  }
+  /* streak flames under the title */
+  var st=null; for(var q2=0;q2<ev.length;q2++)if(ev[q2].kind==='streak')st=ev[q2];
+  if(st&&T>0.9){
+    var n=Math.min(10,st.streak), fy=vh*0.40-44, fx0=vw/2-(n-1)*9;
+    for(var f=0;f<n;f++){ var fl=0.7+0.3*Math.sin(T*14+f*1.7), fx=fx0+f*18;
+      ctx.fillStyle='rgba(255,'+(90+f*14)+',30,0.9)'; ctx.beginPath(); ctx.moveTo(fx-5,fy); ctx.quadraticCurveTo(fx,fy-16*fl,fx+5,fy); ctx.closePath(); ctx.fill(); }
+  }
+  /* event lines, center column */
+  var y=listY, t0=2.4, textEv=0, stampEv=null;
+  ctx.save(); ctx.textAlign='center'; ctx.textBaseline='middle';
+  for(var i2=0;i2<ev.length;i2++){
+    var E=ev[i2], at=t0+textEv*0.9; if(E.kind==='stamp'){ stampEv={E:E,at:at}; }
+    if(T<at){ textEv++; continue; }
+    var a=Math.min(1,(T-at)/0.35), slide=(1-a)*40, txt='', col='#9fd8b0';
+    if(E.kind==='streak'){ txt='WIN STREAK '+E.streak+'  \u00b7  x'+E.mult.toFixed(1)+'  +'+E.bonus.toLocaleString()+' CR'; col='#ff9a3a'; }
+    else if(E.kind==='featured'){ txt='\u2605 FEATURED TOWN  \u00b7  DOUBLE CREDITS  \u00b7  +1 MYSTERY CRATE'; col='#ffd23a';
+      if(_once('feat'+i2))_fxBurst(vw/2,y,24,['#ffd23a','#fff3b0'],'spark'); }
+    else if(E.kind==='magnet'){ txt='CREDIT MAGNET x1.5  +'+E.bonus.toLocaleString()+' CR  ('+E.left+' LEFT)'; col='#7fd0ff'; }
+    else if(E.kind==='stamp'){ txt='PASSPORT STAMP  \u00b7  '+E.sig.name+'  ('+E.n+'/'+E.of+')'; col=E.sig.col; }
+    else if(E.kind==='milestone'){ txt='MILESTONE '+E.at+' STAMPS  \u00b7  +'+E.bonus.toLocaleString()+' CR  \u00b7  '+E.text; col='#ffe98a';
+      if(_once('ms'+i2))_fxBurst(vw/2,y,40,['#ffe98a','#ff9ad0','#7fd0ff','#39ff14'],'confetti'); }
+    else if(E.kind==='legend'){ txt='LEGEND CONQUERED  \u00b7  +'+E.bonus.toLocaleString()+' CR  \u00b7  LEGENDS: '+E.count; col='#ffd23a';
+      if(_once('lg'+i2)){ _fxBurst(vw/2,vh*0.40,90,['#ffd23a','#fff3b0','#ffb000'],'coin'); _fxBurst(vw/2,vh*0.40,60,['#ff9ad0','#7fd0ff','#39ff14'],'confetti'); } }
+    else if(E.kind==='rumour'){ var nch=Math.floor(Math.min(1,(T-at)/1.4)*E.text.length); txt=E.text.slice(0,nch)+(nch<E.text.length&&((T*8)|0)%2?'_':''); col='#7fd0ff'; }
+    else if(E.kind==='streakLost'){ txt='STREAK OF '+E.streak+' LOST'; col='#ff7a6a'; }
+    ctx.globalAlpha=a; ctx.fillStyle=col; ctx.font="10px 'Germania One','Press Start 2P',serif";
+    ctx.fillText(txt,vw/2+slide,y); y+=22; textEv++;
+  }
+  ctx.restore();
+  /* passport stamp slam, right */
+  if(stampEv&&T>stampEv.at){
+    var g=stampEv.E.sig, kk=Math.min(1,(T-stampEv.at)/0.45), sc=kk<1?(1+(1-_easeOutBack(kk))*-1.6+ (1-kk)*1.8):1;
+    var sx=vw*0.84, sy=vh*0.42, R=Math.min(vw,vh)*0.10;
+    if(kk>=1&&_once('slam')){ Flow._shake=0.35; _fxBurst(sx,sy,50,[g.col,'#ffffff'],'confetti'); }
+    ctx.save(); ctx.translate(sx,sy); ctx.rotate(-0.22); ctx.scale(Math.max(0.2,sc),Math.max(0.2,sc));
+    ctx.globalAlpha=Math.min(1,kk*1.4);
+    ctx.strokeStyle=g.col; ctx.lineWidth=4; ctx.beginPath(); ctx.arc(0,0,R,0,Math.PI*2); ctx.stroke();
+    ctx.lineWidth=1.5; ctx.beginPath(); ctx.arc(0,0,R*0.84,0,Math.PI*2); ctx.stroke();
+    ctx.fillStyle=g.col; ctx.textAlign='center'; ctx.textBaseline='middle';
+    var words=g.name.split(' ');
+    ctx.font=Math.round(R*0.22)+"px 'Germania One',serif";
+    for(var w=0;w<words.length;w++)ctx.fillText(words[w],0,(w-(words.length-1)/2)*R*0.26);
+    ctx.font=Math.round(R*0.11)+"px 'Press Start 2P',monospace";
+    ctx.fillText(stampEv.E.n+' / '+stampEv.E.of,0,R*0.62);
+    ctx.restore();
+    if(kk>=1&&T-stampEv.at<1.2){ var sw=(T-stampEv.at-0.45)/0.75;
+      ctx.strokeStyle=g.col; ctx.globalAlpha=Math.max(0,1-sw); ctx.lineWidth=3;
+      ctx.beginPath(); ctx.arc(sx,sy,R*(1+sw*1.6),0,Math.PI*2); ctx.stroke(); ctx.globalAlpha=1; }
+  }
+  _fxDraw(ctx,dt);
+}
+/* ── VICTORY SEQUENCE
+   Short by design: the reward is the unlock and the green dot, not a long
+   cutscene the player will see hundreds of times. */
 function drawVictory(ctx,vw,vh,dt){
   Flow.t+=dt;
   var r=Flow.result||{};
@@ -4107,6 +4695,9 @@ function drawVictory(ctx,vw,vh,dt){
   var k=Math.min(1,Flow.t/0.6);
 
   ctx.save();
+  /* stamp slam jolt */
+  if(Flow._shake>0){ Flow._shake=Math.max(0,Flow._shake-dt); var sa=Flow._shake*18;
+    ctx.translate((Math.random()-0.5)*sa,(Math.random()-0.5)*sa); }
   ctx.fillStyle='rgba(0,0,6,'+(0.55*k).toFixed(2)+')';
   ctx.fillRect(0,0,vw,vh);
   ctx.textAlign='center';ctx.textBaseline='middle';
@@ -4150,6 +4741,8 @@ function drawVictory(ctx,vw,vh,dt){
     }
     ctx.globalAlpha=1;
   }
+  /* TOUR CELEBRATION below the classic reward rows. */
+  try{ drawTourCelebration(ctx,vw,vh,dt,cy+96+((r.rewards&&r.rewards.length)||0)*22+20); }catch(e){}
   if(Flow.t>2.2){
     /* (item 28) Labels come from padGlyph, which reports the connected pad's
        own lettering — the game was naming PlayStation buttons on an Xbox pad.
