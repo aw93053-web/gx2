@@ -1713,6 +1713,50 @@ function charForSeed(seed){
   for(let i=0;i<3;i++)r2();          // same position in the stream
   return CHAR_NAMES[~~(r2()*12)];
 }
+/* ═══ PALETTE ↔ BIOME AFFINITY (plan item 24)
+   The biome (weather, flora, landscape) and the named palette were drawn
+   independently: seed % 144 picked the palette, the theme RNG picked the
+   biome. So a glacier got INFERNO CORE, a jungle got LAVA, a desert got
+   DEEP SEA DRIFT — the scenery said one place and the colours another.
+   Each biome already declares its natural sky and floor hues (BIOME_DEFS).
+   Every palette is scored against them — hue distance of its floor and sky,
+   plus lightness rules for snow and volcanic biomes — and the seed picks
+   among the twelve best matches, so every biome keeps plenty of variety but
+   never a contradiction. Cached per biome; deterministic per seed. */
+function _hexHSL(hex){
+  const h=String(hex||'#000').replace('#','');
+  const r=parseInt(h.slice(0,2),16)/255||0, g=parseInt(h.slice(2,4),16)/255||0, b=parseInt(h.slice(4,6),16)/255||0;
+  const mx=Math.max(r,g,b), mn=Math.min(r,g,b), l=(mx+mn)/2, d=mx-mn;
+  if(d<1e-6)return [0,0,l];
+  const sat=l>0.5?d/(2-mx-mn):d/(mx+mn);
+  let hue=mx===r?((g-b)/d+(g<b?6:0)):mx===g?((b-r)/d+2):((r-g)/d+4);
+  return [hue*60,sat,l];
+}
+const _themePools={};
+function _themeForBiome(seed,biome){
+  const B=BIOME_DEFS[biome];
+  if(!B)return TRACK_THEMES[((seed>>>0)%TRACK_THEMES.length+TRACK_THEMES.length)%TRACK_THEMES.length];
+  let pool=_themePools[biome];
+  if(!pool){
+    const hd=(a,b)=>{ const d=Math.abs(((a-b)%360+540)%360-180); return d; };
+    const snow=B.tag==='snow', hot=(biome==='volcano'), urban=(B.tag==='city');
+    const scored=TRACK_THEMES.map((T,i)=>{
+      const f=_hexHSL(T.floorA), k=_hexHSL(T.skyC||T.skyB);
+      // A grey floor or sky has no meaningful hue: score it as a middling match.
+      const fd=f[1]<0.12?70:hd(f[0],B.floor), kd=k[1]<0.12?70:hd(k[0],B.sky);
+      let sc=fd*1.0+kd*0.6;
+      if(snow&&f[2]<0.30&&!T.daylight)sc+=40;             // snow country is not a black floor
+      if(snow&&f[1]>0.25&&hd(f[0],30)<40)sc+=80;           // …nor an orange one
+      if(hot&&f[2]>0.45)sc+=50;                            // volcanic ground is dark
+      if(urban&&T.urban)sc-=25;
+      if(!urban&&biome!=='lunar'&&T.urban&&f[1]>0.4&&fd>60)sc+=20;
+      return {i,sc};
+    }).sort((a,b)=>a.sc-b.sc||a.i-b.i);
+    pool=_themePools[biome]=scored.slice(0,12).map(o=>TRACK_THEMES[o.i]);
+  }
+  let h=Math.imul((seed>>>0)^0x5bd1e995,0x9e3779b1)>>>0; h=(h^(h>>>15))>>>0;
+  return pool[h%pool.length];
+}
 function makeTheme(seed){
   let _hfTmp=null;   // shared between the heavyFog and timeT fields below
   const r=rngFactory(seed*2654435761>>>0);
@@ -1725,8 +1769,7 @@ function makeTheme(seed){
   }catch(e){}
   const B=BIOME_DEFS[biome];
   // Pick a track theme (every seed gets one; biome drives weather/particles)
-  const TT=TRACK_THEMES[((seed>>>0)%TRACK_THEMES.length+TRACK_THEMES.length)%TRACK_THEMES.length]
-           ||TRACK_THEMES[0];
+  const TT=_themeForBiome(seed,biome)||TRACK_THEMES[0];
   // Lock daylight themes to a daytime clock so shading agrees with the sky.
   if(TT.daylight&&dm.todOverride==null)dm._dayLock=0.34+((seed>>>7)%100)/100*0.28;
   else dm._dayLock=null;
@@ -2556,6 +2599,31 @@ function drawRing(sp,vw,vh){
    track, each on pillars down to the ground outside the rails, with a lit
    underside. Depth-sorted with the other sprites, so it covers the road beyond
    it and passes overhead as the camera drives under. */
+/* ═══ CAMERA-OCCLUDER FADE (plan item 11)
+   Cinematic poses swing the eye round, along and beside the machine, and a
+   roadside building, crystal or bridge deck can end up between the lens and
+   the car — or around the lens entirely. The pseudo-3D projector has no near
+   plane to clip against, so instead of geometry this does what 3D games do:
+   anything NEARER than the car that covers the car's screen box fades toward
+   20%, continuously with the amount of cover (no popping), and anything that
+   fills the frame — taller than 1.6 viewports and wider than half of it — is
+   faded out as the eye enters it. Only active in cinematic views (attract,
+   intro, debug viewpoint); the race camera is untouched. dm._occl is filled
+   once per frame in renderWorld. */
+function _occlK(depthZ,x0,x1,y0,y1,vw,vh){
+  const O=dm._occl; if(!O||!O.on)return 1;
+  let k=1;
+  if(depthZ<O.depth-SEG_LEN*0.5){
+    const ox=Math.min(x1,O.x1)-Math.max(x0,O.x0), oy=Math.min(y1,O.y1)-Math.max(y0,O.y0);
+    if(ox>0&&oy>0){
+      const f=Math.min(1,ox/(O.x1-O.x0))*Math.min(1,oy/(O.y1-O.y0));
+      k=1-0.80*f*f*(3-2*f);
+    }
+  }
+  const hh=y1-y0, ww=Math.min(x1,vw)-Math.max(x0,0);
+  if(hh>vh*1.6&&ww>vw*0.5)k*=Math.max(0,1-(hh-vh*1.6)/(vh*0.6));
+  return k;
+}
 function drawDeck(sp,vw,vh){
   /* ═══ A BRIDGE, NOT A FLOATING BAR
      The deck was a thin 11-half-width slab with a hue-tinted light strip and
@@ -2569,7 +2637,14 @@ function drawDeck(sp,vw,vh){
   const clip=(s._envClip!=null)?s._envClip:vh;
   const ws=s._wScale||1, b=p.w/ws;                     // base half-width in px (1 unit of deck height)
   const night=isNight();
+  /* A deck spans the whole view, so it occludes whenever its band crosses
+     the car's box (plan item 11). */
+  let _dTop=vh, _dBot=0;
+  for(const d of s._decks){ const yb=p.y-d.h*b, yt=yb-Math.max(d.th,0.45)*b; if(yt<_dTop)_dTop=yt; if(yb>_dBot)_dBot=yb; }
+  const _dk=_occlK(s.p1.camera.z,0,vw,_dTop,_dBot,vw,vh);
+  if(_dk<=0.01)return;
   ctx.save(); ctx.beginPath(); ctx.rect(0,0,vw,Math.max(0,clip)); ctx.clip();
+  if(_dk<1)ctx.globalAlpha*=_dk;
   const x0=Math.min(0,p.x-b*40), x1=Math.max(vw,p.x+b*40);
   const concrete=night?'#2c2d33':'#77726a', shade=night?'#18191e':'#4c4843', pier=night?'#25262c':'#6a655d';
   for(let q=s._decks.length-1;q>=0;q--){
@@ -2624,6 +2699,13 @@ const _ENV_ZONES={
   ocean:[_Z('grove',0.9,[['palm',6],['bush',2],['rock',1]]),_Z('scatter',0.8,[['grass',6],['bush',2]]),_Z('scatter',0.7,[['rock',5],['boulder',3]])],
   islands:[_Z('grove',1.0,[['palm',6],['bush',2],['rock',1]]),_Z('scatter',0.8,[['grass',6],['bush',2]]),_Z('scatter',0.7,[['rock',5],['boulder',3]])]
 };
+/* [high ground, low ground] neighbours for each biome (see ALTITUDE-AWARE
+   ECOTONES). Built environments and the moon have none. */
+const _ECOTONE={forest:['alpine','wetland'],plains:['forest','wetland'],jungle:['forest','wetland'],
+  savanna:['mesa','wetland'],desert:['mesa','savanna'],mesa:['canyon','desert'],canyon:['mesa','desert'],
+  alpine:['glacier','forest'],tundra:['arctic','wetland'],arctic:['glacier','tundra'],glacier:['arctic','tundra'],
+  swamp:['forest','wetland'],wetland:['forest','swamp'],volcano:['canyon','mesa'],ocean:['islands','wetland'],
+  islands:['jungle','ocean'],haunted:['forest','swamp']};
 function _envRand(seed){let s=(seed>>>0)||1;return function(){s^=s<<13;s>>>=0;s^=s>>>17;s^=s<<5;s>>>=0;return s/4294967296;};}
 /* Build the landscape for the finished track. Called at the end of buildTrack. */
 function buildEnvironment(seed,biome){
@@ -2636,7 +2718,47 @@ function buildEnvironment(seed,biome){
   // Zone for every segment: a hashed walk through the biome's environments.
   const zoneOf=new Uint8Array(N); let zi=Math.floor(R()*zones.length);
   for(let i=0;i<N;){ const len=400+Math.floor(R()*600); for(let k=0;k<len&&i<N;k++,i++)zoneOf[i]=zi; zi=(zi+1+Math.floor(R()*(zones.length-1)))%zones.length; }
-  for(let i=0;i<N;i++)if(segments[i])segments[i]._envZone=zones[zoneOf[i]];
+  /* ═══ ALTITUDE-AWARE ECOTONES (plan item 25)
+     A biome's three environments were walked in hashed runs with no regard
+     for the ground, so a mountain top and a valley floor looked alike and a
+     whole track stayed one landscape. Each biome now has a HIGH and a LOW
+     neighbour (forest → alpine above, wetland below; desert → mesa above,
+     savanna below...). Where the track has real relief, sustained high
+     ground takes one of the high neighbour's environments and sustained low
+     ground one of the low neighbour's, with hysteresis and a minimum run so
+     bands never flicker. A climbing track now passes through recognisable
+     vegetation belts. Roadside planting follows (segment._eco). */
+  const _eco=_ECOTONE[biome]||[null,null];
+  const hiZ=_eco[0]?(_ENV_ZONES[_eco[0]]||[]):[], loZ=_eco[1]?(_ENV_ZONES[_eco[1]]||[]):[];
+  const ALLZ=zones.concat(hiZ,loZ);
+  const ECO=zones.map(()=>biome).concat(hiZ.map(()=>_eco[0]),loZ.map(()=>_eco[1]));
+  if((hiZ.length||loZ.length)&&N>600){
+    const W=60, pre=new Float64Array(N+1);
+    for(let i=0;i<N;i++)pre[i+1]=pre[i]+(segments[i]?segments[i].p1.world.y:0);
+    const ys=new Float32Array(N);
+    for(let i=0;i<N;i++){ const a=Math.max(0,i-W), b=Math.min(N,i+W+1); ys[i]=(pre[b]-pre[a])/(b-a); }
+    const srt=Float32Array.from(ys).sort(), p20=srt[Math.floor(N*0.13)], p80=srt[Math.floor(N*0.87)];   // outer ~13% each way
+    const relief=p80-p20;
+    if(relief>SEG_LEN*20){
+      const hys=relief*0.15, band=new Int8Array(N); let cur=0;
+      for(let i=0;i<N;i++){
+        const y=ys[i];
+        if(cur===1){ if(y<p80-hys)cur=0; } else if(cur===2){ if(y>p20+hys)cur=0; }
+        if(cur===0){ if(y>p80&&hiZ.length)cur=1; else if(y<p20&&loZ.length)cur=2; }
+        band[i]=cur;
+      }
+      for(let i=0;i<N;){
+        let j=i; while(j<N&&band[j]===band[i])j++;
+        if(band[i]&&j-i>=120){
+          const pick=Math.floor(R()*(band[i]===1?hiZ.length:loZ.length));
+          const zIdx=band[i]===1?zones.length+pick:zones.length+hiZ.length+pick;
+          for(let k=i;k<j;k++)zoneOf[k]=zIdx;
+        }
+        i=j;
+      }
+    }
+  }
+  for(let i=0;i<N;i++)if(segments[i]){ segments[i]._envZone=ALLZ[zoneOf[i]]; segments[i]._eco=ECO[zoneOf[i]]; }
   const pick=(list)=>{let t=0;for(const e of list)t+=e[1];let r=R()*t;for(const e of list){r-=e[1];if(r<=0)return _EK[e[0]];}return _EK[list[0][0]];};
   const put=(i,kind,off,big)=>{
     i=((i%N)+N)%N; const sg=segments[i]; if(blocked(sg))return;
@@ -2649,7 +2771,7 @@ function buildEnvironment(seed,biome){
   for(const side of [-1,1]){
     let i=Math.floor(R()*40);
     while(i<N){
-      const Z=zones[zoneOf[i]];
+      const Z=ALLZ[zoneOf[i]];
       const band=R()<0.7?(3.6+R()*5.4):(9+R()*19);     // mid or far band
       const cOff=side*band;
       if(Z.style==='grove'){
@@ -2813,6 +2935,156 @@ function buildEnvironment(seed,biome){
   }
   return total;
 }
+/* ═══ ROADSIDE COMPOSITION (plan items 20-23)
+   The older roadside props were chosen one at a time: every plant rolled its
+   own side, species (12 tree forms, uniformly), height and a hue up to ±62°
+   from its side's colour; every building rolled its own class from all 50.
+   Measured over 60 seeds: 7 different tree species and a 37° hue spread in a
+   typical 150-segment stretch, and one building in ten standing alone in open
+   country. Individually varied, collectively random.
+   This pass composes what was placed, without adding or moving the road:
+     20. PLANTING SCHEMES — each side is cut into stretches of 90-260 segments;
+         a stretch gets one or two species, a hue centre (the stretch's own
+         mean, so each scene profile keeps its palette) with ±11° variation,
+         a height band, and a rhythm: grove, avenue (one planting line, even
+         height), mixed grove (wider heights) or open (thinned).
+     21. BIOME FLORA — species come from the biome's own table: palms and
+         acacias in the desert, conifers in the alpine, banyans in the jungle.
+     22. SETTLEMENTS — buildings within 40 segments of each other form a
+         settlement with one setback line and one district type (residential,
+         commercial, industrial or civic), tall buildings behind low ones. A
+         lone building in open country becomes landscape.
+     23. TERRAIN — landforms follow the ground: rock and stones in cuttings,
+         reed ponds and grass in valleys, ruins and stones on crests, and only
+         kinds the biome can have (no dunes in the tundra, no ponds on the moon).
+   Everything is hashed from the seed, so preview and race agree. */
+const _FLORA={plains:[0,3,5],ocean:[2,4,0],forest:[0,1,5],islands:[2,9],arctic:[1,7,10],
+  desert:[2,6,10],swamp:[4,9,10],volcano:[10,7],canyon:[6,10],lunar:[8,3],city:[3,0,7],
+  haunted:[10,4],alpine:[1,7],tundra:[1,10],jungle:[9,2,5],savanna:[6,11],mesa:[6,10],
+  glacier:[1,10],wetland:[4,3,0],neon:[8,3,7]};
+/* Landform kinds a biome can have: 0 rock 1 grass 2 terrace 3 stones 4 reed pond
+   5 arch 6 crystal 7 ruin 8 fungi 9 dune. [cutting, valley, crest, fallback] */
+const _LANDS={plains:[0,4,7,1],ocean:[0,1,3,9],forest:[0,4,3,1],islands:[0,1,3,9],
+  arctic:[0,3,6,0],desert:[0,9,7,9],swamp:[0,4,8,1],volcano:[0,0,6,3],canyon:[0,9,2,0],
+  lunar:[0,0,6,3],city:[3,1,7,1],haunted:[3,4,7,8],alpine:[0,4,3,0],tundra:[0,1,3,0],
+  jungle:[0,4,7,8],savanna:[0,1,3,9],mesa:[2,9,2,0],glacier:[0,3,6,0],wetland:[0,4,3,1],
+  neon:[3,1,6,3]};
+const _LAND_OK={0:1,1:1,2:1,3:1,4:'wet',5:'arch',6:'hard',7:1,8:'damp',9:'dry'};   // 5 natural arch
+const _ARCH_BIOMES={desert:1,canyon:1,mesa:1,savanna:1,ocean:1,islands:1,alpine:1,volcano:1};
+const _WET_BIOMES={plains:1,ocean:1,forest:1,islands:1,swamp:1,alpine:1,jungle:1,wetland:1,haunted:1,city:1,tundra:1};
+const _DAMP_BIOMES={swamp:1,jungle:1,haunted:1,wetland:1,forest:1};
+const _HARD_BIOMES={lunar:1,neon:1,glacier:1,arctic:1,volcano:1,haunted:1,canyon:1};
+const _DRY_BIOMES={desert:1,savanna:1,mesa:1,canyon:1,ocean:1,islands:1};
+function _composeRoadside(seed,biome){
+  const N=segments.length; if(N<50)return;
+  const H=(x)=>{ let h=((seed>>>0)^Math.imul((x|0)+0x632be5ab,0x9e3779b1))>>>0;
+    h^=h>>>15; h=Math.imul(h,0x85ebca6b)>>>0; h^=h>>>13; h=Math.imul(h,0xc2b2ae35)>>>0; h^=h>>>16; return h>>>0; };
+  const flora=_FLORA[biome]||_FLORA.plains, lands=_LANDS[biome]||_LANDS.plains;
+  const urban=(biome==='city'||biome==='neon');
+  const each=(g,fn)=>{ if(g.sprite)fn(g.sprite,'s1'); if(g.sprite2)fn(g.sprite2,'s2');
+    if(g.extraVeg)for(let e=0;e<g.extraVeg.length;e++)fn(g.extraVeg[e],'xv'); };
+  const yAt=(i)=>{ const g=segments[((i%N)+N)%N]; return g?g.p1.world.y:0; };
+  // ── 20 + 21: planting schemes, per side and stretch
+  for(const side of [-1,1]){
+    let a=0, c=0;
+    while(a<N){
+      const b=Math.min(N,a+90+H(side*7919+c)%171), h0=H(side*104729+c*31+7);
+      const trees=[], bushes=[];
+      for(let i=a;i<b;i++){ const g=segments[i]; if(!g)continue;
+        each(g,(sp,where)=>{ if(sp.side!==side)return;
+          if(sp.veg==='tree')trees.push({sp,g,where}); else if(sp.veg==='bush')bushes.push({sp,g,where}); }); }
+      if(trees.length||bushes.length){
+        /* Species follow the stretch's ecotone (plan item 25): conifers on
+           the alpine band of a forest track, reeds-country trees below. */
+        const _em=segments[(a+b)>>1]&&segments[(a+b)>>1]._eco;
+        const fl=(_em&&_FLORA[_em])||flora;
+        const f1=fl[h0%fl.length], f2=fl[(h0>>>9)%fl.length];
+        const rhythm=['grove','avenue','mixed','open'][(h0>>>17)%4];
+        let sx=0,sy=0,nh=0;
+        for(const t of trees.concat(bushes))if(t.sp.hueAbs!=null){ const r=t.sp.hueAbs*Math.PI/180; sx+=Math.cos(r); sy+=Math.sin(r); nh++; }
+        const hc=nh?((Math.atan2(sy,sx)*180/Math.PI)+360)%360:null;
+        const pull=(sp)=>{ if(hc!=null&&sp.hueAbs!=null){ const d=((sp.hueAbs-hc)%360+540)%360-180;
+            sp.hueAbs=((hc+d*0.18)%360+360)%360; }
+          if(sp.satJit!=null)sp.satJit*=0.35; if(sp.litJit!=null)sp.litJit*=0.35; };
+        const hs=trees.map(t=>t.sp.h).sort((x,y)=>x-y), hm=hs.length?hs[hs.length>>1]:0;
+        const band=(rhythm==='mixed')?0.45:0.22;
+        const lineOff=2.25+hm/1500;
+        const drop=new Set();
+        trees.forEach((t,j)=>{
+          const sp=t.sp, hj=H(h0+j*13+1);
+          sp.tf=(((hj%100)<78)?f1:f2)+12*((hj>>>7)&1);      // tf%12 is the form
+          pull(sp);
+          if(hm>0&&sp.h>0){ const r=sp.h/hm, k=Math.min(1+band,Math.max(1-band,r))/r;
+            sp.h*=k; sp.w*=Math.sqrt(k); }
+          if(rhythm==='avenue'){
+            if(t.where==='xv')sp.off=Math.max(sp.off,lineOff+1.6);   // the wood behind the avenue
+            else { sp.off=lineOff+((hj>>>12)%100)/100*0.12; sp.h=hm*(0.96+((hj>>>20)%9)/100); sp.lean=0; }
+          } else if(rhythm==='open'&&t.where==='xv'&&(hj%100)<55)drop.add(sp);
+        });
+        for(const t of bushes)pull(t.sp);
+        if(drop.size)for(let i=a;i<b;i++){ const g=segments[i]; if(g&&g.extraVeg)g.extraVeg=g.extraVeg.filter(e=>!drop.has(e)); }
+      }
+      a=b; c++;
+    }
+  }
+  // ── 22: settlements
+  const DIST=[[0,11],[12,23],[24,33],[34,49]];   // residential, commercial, industrial, civic
+  const keepHint=!!dm._wtSettlement;              // World Tour cities choose their own pool
+  for(const side of [-1,1]){
+    const bl=[];
+    for(let i=0;i<N;i++){ const g=segments[i]; if(!g)continue;
+      for(const key of ['sprite','sprite2']){ const sp=g[key];
+        if(sp&&sp.side===side&&!sp.veg&&sp.kind!=null)bl.push({i,g,key,sp}); } }
+    let j=0, cl=0;
+    while(j<bl.length){
+      let k=j+1; while(k<bl.length&&bl[k].i-bl[k-1].i<=40)k++;
+      const grp=bl.slice(j,k), hg=H(side*3571+cl*97+13);
+      if(grp.length===1){
+        /* A lone building in open country becomes landscape: a street tree in
+           a city, otherwise the biome's crest landform (ruin, stones...). */
+        const o=grp[0];
+        if(urban){ o.g[o.key]={side,off:Math.max(2.3,o.sp.off*0.6),veg:'tree',h:700+hg%500,w:300+hg%160,
+            ph:(hg%700)/100,tf:flora[hg%flora.length],hueAbs:null,layers:3+hg%3}; }
+        else o.g[o.key]={side,off:Math.max(2.2,o.sp.off*0.7),veg:'land',land:lands[2],lv:hg%4,
+            h:560+hg%880,w:440+(hg>>>10)%500,ph:(hg%700)/100};
+      } else {
+        const front=grp.filter(o=>o.sp.off<4.4).map(o=>o.sp.off).sort((x,y)=>x-y);
+        const setback=front.length?front[front.length>>1]:null;
+        const dist=urban?DIST[[1,1,3,0][hg%4]]:DIST[[0,0,2,3][hg%4]];
+        grp.forEach((o,q)=>{
+          const hq=H(hg+q*7+3);
+          if(setback!=null&&o.sp.off<4.4)o.sp.off=setback+((hq%100)/100-0.5)*0.30;
+          if(!keepHint)o.sp._bldgClassHint=dist[0]+hq%(dist[1]-dist[0]+1);
+        });
+        // tall behind low: at a segment with a front and a back building
+        for(const o of grp){ if(o.key!=='sprite')continue; const b2=o.g.sprite2;
+          if(b2&&b2.side===side&&!b2.veg&&b2.kind!=null&&b2.h<o.sp.h&&b2.off>o.sp.off){
+            const t=b2.off; b2.off=o.sp.off; o.sp.off=t; o.g.sprite=b2; o.g.sprite2=o.sp; } }
+      }
+      j=k; cl++;
+    }
+  }
+  // ── 23: landforms follow the terrain and the biome
+  const okIn=(kind,bi)=>{ const r=_LAND_OK[kind]; if(r===1)return true;
+    return r==='wet'?!!_WET_BIOMES[bi]:r==='damp'?!!_DAMP_BIOMES[bi]
+          :r==='hard'?!!_HARD_BIOMES[bi]:r==='dry'?!!_DRY_BIOMES[bi]
+          :r==='arch'?!!_ARCH_BIOMES[bi]:false; };
+  for(let i=0;i<N;i++){ const g=segments[i]; if(!g)continue;
+    let terr=-1;
+    const grade=Math.abs(yAt(i+8)-yAt(i-8))/(16*SEG_LEN);
+    const y0=yAt(i), yl=Math.min(yAt(i-60),yAt(i+60)), yh=Math.max(yAt(i-60),yAt(i+60));
+    if(grade>0.35)terr=0;                                 // cutting
+    else if(y0<yl-SEG_LEN*2)terr=1;                       // valley floor
+    else if(y0>yh+SEG_LEN*2)terr=2;                       // crest
+    const eb=g._eco||biome, ln=_LANDS[eb]||lands;          // the ecotone band's own landforms
+    each(g,(sp)=>{
+      if(sp.veg!=='land')return;
+      const hq=H(i*5+(sp.side|0)+11);
+      if(terr>=0&&(hq%100)<70)sp.land=ln[terr];
+      if(!okIn(sp.land|0,eb))sp.land=ln[3];
+    });
+  }
+}
 /* ═══ NOTHING STANDS ON WATER OR IN FIRE
    Removes the older roadside props (trees, bushes, buildings, signs) from the
    water side(s) of every water segment (water<0 = left, 2 = both, otherwise
@@ -2903,6 +3175,7 @@ function drawEnv(sp,vw,vh){
   const clip=(s._envClip!=null)?s._envClip:vh;
   const fogRow=(n>DRAW_DIST*0.42)?3:0;
   const CH=A.CH, cv=A.cv;
+  const _occlOn=!!(dm._occl&&dm._occl.on), _a0=ctx.globalAlpha; let _occlA=false;   // see CAMERA-OCCLUDER FADE
   for(let i=s._envA,e=s._envA+s._envC;i<e;i++){
     if(_vegGPUActive&&_ENV_IS_VEG[E.k[i]]&&!(dm._boreClip&&n>dm._boreClip.farN))continue;   // drawn by the GPU pass
     /* Houses and towers use the full building generator (window.Buildings)
@@ -2936,6 +3209,9 @@ function drawEnv(sp,vw,vh){
              moved outward until its inner edge sits just outside the rail. */
           const _edgeB=((s._wScale||1)*1.06+0.12)*p.w, _offB=E.off[i]*p.w, _sgB=_offB<0?-1:1;
           const xB=p.x+_sgB*Math.max(Math.abs(_offB),_edgeB+wB*0.5);
+          const _okB=_occlOn?_occlK(s.p1.camera.z,xB-wB*0.5,xB+wB*0.5,p.y-hB,p.y,vw,vh):1;
+          if(_okB<=0.01)continue;
+          if(_okB<1){ ctx.globalAlpha=_a0*_okB; _occlA=true; } else if(_occlA){ ctx.globalAlpha=_a0; _occlA=false; }
           if(xB+wB*0.5>=0&&xB-wB*0.5<=vw){
             const topB=p.y-hB;
             if(topB<clip){
@@ -2957,9 +3233,15 @@ function drawEnv(sp,vw,vh){
     const top=p.y-h; if(top>=clip)continue;
     const cut=Math.max(0,p.y-clip), dh=h-cut; if(dh<=0.5)continue;
     const sy=(fogRow+E.v[i])*CH, sh=CH*(dh/h);
+    if(_occlOn){
+      const _ok=_occlK(s.p1.camera.z,x-w*0.5,x+w*0.5,top,p.y,vw,vh);
+      if(_ok<=0.01)continue;
+      if(_ok<1){ ctx.globalAlpha=_a0*_ok; _occlA=true; } else if(_occlA){ ctx.globalAlpha=_a0; _occlA=false; }
+    }
     ctx.drawImage(cv,cell.x,sy,cell.w,sh,x-w*0.5,top,w,dh);
     _envBudget--;
   }
+  if(_occlA)ctx.globalAlpha=_a0;
 }
 /* ═══ GPU VEGETATION — one instanced WebGL draw per frame
    Trees, bushes, grass, palms, dead trees, reeds and cacti are no longer drawn
@@ -4342,6 +4624,79 @@ function _buildTrackImpl(seed){
       }
     }
   };
+  /* ═══ ABSURD SET PIECES (plan item 15)
+     Built ONLY from curve + elevation primitives (addRoad) and existing
+     segment flags — ramp/jumpPlate for airtime, climb/plunge tints, boost
+     pads, rush — so the scanline renderer draws them with no new geometry
+     code and they inherit every safety pass that runs after placement.
+     Each is designed around one surprise the player cannot see coming. */
+  const _absurdMark=(a,tag)=>{ for(let k=a;k<segments.length;k++)if(segments[k]){ segments[k].absurdPiece=tag; } };
+  // CLIFF DROP — climb to a blind crest, a lip, then the road simply falls
+  // away: a sheer drop with a hard compression at the bottom.
+  const mkCliffDrop=()=>{
+    const a=segments.length;
+    addRoad(18,36,10,0, 2.4*hillAmp);                    // blind climb
+    for(let k=a;k<segments.length;k++)if(segments[k])segments[k].climb=true;
+    const lip=segments.length;
+    addRoad(2,4,2,0, 0.7*hillAmp);                       // the lip / kicker
+    for(let k=lip;k<segments.length;k++)if(segments[k]){segments[k].ramp=true;segments[k].jumpPlate=true;}
+    const drop=segments.length;
+    addRoad(4,24,14, sign*0.5, -(7.5+rng()*3.5)*hillAmp); // the fall
+    addRoad(10,16,14,0, 0.5*hillAmp);                    // compression + run-out
+    for(let k=drop;k<segments.length;k++)if(segments[k]){segments[k].plunge=true;segments[k].rush=1.22;}
+    _absurdMark(a,'cliffdrop');
+  };
+  // ROLLER WAVE — every bend is also a hill, phase-locked: the road snakes
+  // in three dimensions, cresting as it changes direction.
+  const mkRollerWave=()=>{
+    const a=segments.length, n=5+~~(rng()*4);
+    for(let i=0;i<n;i++){
+      const d=(i%2?1:-1)*sign;
+      addRoad(8,14,8, d*(3.0+rng()*1.4), (i%2?-1:1)*(2.2+rng()*1.3)*hillAmp);
+      const v=segments.length-6;                         // pad in each dip
+      if(i%2&&segments[v]){ for(let k=v;k<v+4&&k<segments.length;k++)segments[k].boost=true; }
+    }
+    for(let k=a;k<segments.length;k++)if(segments[k]){segments[k].rush=Math.max(segments[k].rush||1,1.12);}
+    _absurdMark(a,'rollerwave');
+  };
+  // SPIRAL STAIR — one unbroken tight turn that climbs in terraces: the
+  // horizon keeps swinging while the road steps upward.
+  const mkSpiralStair=()=>{
+    const a=segments.length, steps=4+~~(rng()*3), dir=rng()<0.5?1:-1;
+    for(let i=0;i<steps;i++){ addRoad(5,16,3, dir*5.0, 1.9*hillAmp); addRoad(3,10,5, dir*5.0, 0); }
+    addRoad(12,20,12, dir*1.2, -0.8*hillAmp);            // unwind
+    for(let k=a;k<segments.length;k++)if(segments[k]){segments[k].terrace=true;segments[k].climb=true;}
+    _absurdMark(a,'spiralstair');
+  };
+  // BLIND SNAP — a crest you cannot see over, and a right-angle turn waiting
+  // on the far side of it.
+  const mkBlindSnap=()=>{
+    const a=segments.length, d=rng()<0.5?1:-1;
+    addRoad(16,26,6,0, 3.0*hillAmp);
+    addRoad(3,3,3,0, 0.4*hillAmp);                       // crest
+    addRoad(5,8,5, d*9.0, -2.2*hillAmp);                 // the snap, falling away
+    addRoad(10,22,10,0, -0.8*hillAmp);
+    for(let k=a;k<segments.length;k++)if(segments[k])segments[k].climb=(k<a+35);
+    _absurdMark(a,'blindsnap');
+  };
+  // SLINGSHOT — a long dive gathers speed, a near-hairpin at the bottom
+  // must be carried flat, and a launch climb throws the car into the air.
+  const mkSlingshot=()=>{
+    const a=segments.length;
+    addRoad(14,48,10, sign*0.8, -(5.0+rng()*3.0)*hillAmp);
+    const pads=segments.length-12;
+    for(let k=Math.max(a,pads);k<segments.length;k++)segments[k].boost=true;
+    for(let k=a;k<segments.length;k++)if(segments[k]){segments[k].plunge=true;segments[k].rush=1.18;}
+    addRoad(8,24,8, -sign*7.0, 0.4*hillAmp);             // the sling
+    const up=segments.length;
+    addRoad(10,28,4,0, (4.0+rng()*2.0)*hillAmp);         // launch climb
+    for(let k=up;k<segments.length;k++)if(segments[k])segments[k].climb=true;
+    const kick=segments.length;
+    addRoad(2,4,2,0, 0.6*hillAmp);
+    for(let k=kick;k<segments.length;k++)if(segments[k]){segments[k].ramp=true;segments[k].jumpPlate=true;}
+    addRoad(6,14,12,0, -1.6*hillAmp);                    // landing
+    _absurdMark(a,'slingshot');
+  };
   const _emit={flyover:mkFlyover,split:mkSplit,corkscrew:mkHelix,phase:mkPhase,
     wallride:mkWall,mesh:mkMesh,twist:mkTwist,pipe:mkPipe,multideck:mkMultiDeck,
     junction:mkJunction,halfpipe:mkHalfPipe,figure8:mkFigure8,airgap:mkAirGap,
@@ -4374,7 +4729,9 @@ function _buildTrackImpl(seed){
     bridge:mkBridge, underpass:mkUnderpass,
     megaelevation:mkMegaElevation,
     rainbowroad:mkRainbowRoad, turbotornado:mkTurboTornado,
-    mirrorstraight:mkMirrorStraight, zigzagstorm:mkZigzagStorm};
+    mirrorstraight:mkMirrorStraight, zigzagstorm:mkZigzagStorm,
+    cliffdrop:mkCliffDrop, rollerwave:mkRollerWave, spiralstair:mkSpiralStair,
+    blindsnap:mkBlindSnap, slingshot:mkSlingshot};
   // Tracks without rush appetite never draw the rush feature, so the palette
   // itself differs by parameter — not just by random shuffle.
   STRUCTS=Object.values(_emit);
@@ -4382,7 +4739,9 @@ function _buildTrackImpl(seed){
   // they simply get a lower weight on tracks with little rush appetite.
   const _emitKeys=Object.keys(_emit);
   const _featCount={};                       // name → count, saved for preview
-  const _runEmit=(name)=>{_emit[name]();_featCount[name]=(_featCount[name]||0)+1;};
+  const _featLog=[];                         // [{k,a,b}] emission order + span, for the audit
+  const _runEmit=(name)=>{const a=segments.length;_emit[name]();_featCount[name]=(_featCount[name]||0)+1;
+    _featLog.push({k:name,a:a,b:segments.length});};
   // SIGNATURE archetypes concentrate one feature heavily (→ "5× Corkscrew").
   const _signatureFeat={CORKSCREW_ALLEY:'corkscrew',PIPE_DREAM:'pipe',
     JUNCTION_MAZE:'junction',DECK_STACK:'multideck',SKY_WEAVE:'twist',
@@ -4393,7 +4752,20 @@ function _buildTrackImpl(seed){
   // Net +15%: the richer feature set adds some length on its own, so the
   // base multiplier is trimmed to land on the intended target.
   const _lenMul=(_isLong?1.30:(0.85+rng()*0.35))*1.02;
-  let _lenTarget=Math.round(TOTAL_SEGS*_lenMul);
+  /* ═══ LENGTH IS PLANNED, NOT PATCHED (plan item 18)
+     The character / World Tour / Algorithm-Tool length multiplier used to be
+     applied AFTER the whole lap had been composed: a short character cut the
+     finished track off (dropping the planned finish, the crescendo's peak
+     and features the preview still advertised), and a long one extended it
+     by CLONING THE START OF THE LAP onto the end — the second half of a long
+     course was a literal repeat of the first. The multiplier now sets the
+     length the director composes for, so every lap is one designed piece. */
+  const _tlMul=(function(){
+    const w=_wtCfg();
+    return _AO('_trackLength',1)*(segments._charLen||1)*((w&&w.lenMul)?w.lenMul:1);
+  })();
+  let _lenTarget=Math.round(TOTAL_SEGS*_lenMul*Math.max(0.3,Math.min(3,_tlMul)));
+  _lenTarget=Math.max(1200,Math.min(TRACK_MAX_SEGS-900,_lenTarget));
 
   // Feature budget scales with length; long tracks get proportionally more.
   // Feature count now responds to the track's own parameters.
@@ -4407,7 +4779,8 @@ function _buildTrackImpl(seed){
                'bridge','underpass','megaelevation','rainbowroad','turbotornado','zigzagstorm',
                'skyramp','plates','gravitywell','boostchain',
                'verticalloop','hyperlane','bottleneck',
-               'sweeparc','flowchain','openrun','downhillblast','crestsweep'];
+               'sweeparc','flowchain','openrun','downhillblast','crestsweep',
+               'cliffdrop','rollerwave','spiralstair','blindsnap','slingshot'];
   const _paletteSize=5+~~(rng()*5);             // 5-9 types this course
   const _palette=[];
   // 4-7 hero types, chosen fresh per track
@@ -4467,6 +4840,8 @@ function _buildTrackImpl(seed){
     // absurd (keep as is)
     rainbowroad:[1,'absurd'], turbotornado:[1,'absurd'],
     mirrorstraight:[1,'absurd'], zigzagstorm:[2,'absurd'],
+    cliffdrop:[2,'absurd'], rollerwave:[2,'absurd'], spiralstair:[1,'absurd'],
+    blindsnap:[2,'absurd'], slingshot:[2,'absurd'],
     megaelevation:[2,'absurd'],
     // legacy flow / technical entries retained for archetype compatibility
     plates:[2,'structure'], nightgate:[2,'structure'], canyonrun:[2,'structure'],
@@ -4527,8 +4902,24 @@ function _buildTrackImpl(seed){
     }
   }catch(e){}
   const _fMeta=(k)=>_FEAT_META[k]||[1,'flow'];
-  const _fInt=(k)=>_fMeta(k)[0];
+  /* ═══ INTENSITY IS NOT A COUNT (plan item 4)
+     _FEAT_META[k][0] is "sections per track" — that is what the Algorithm
+     Tool's _feat_* sliders say and write. The director used it as a 0..3
+     INTENSITY, so every feature rated 5-7 (plunge, climb, wallride, airgap,
+     flyover, junction, bridge, sweeparc, flowchain...) took a -6..-15 score
+     penalty against a desired intensity of 0..3: the director avoided them,
+     the must-place pass dumped them before the finish line, and raising a
+     slider made that feature RARER. Intensity now comes from the feature's
+     character (with a few explicit overrides); the count is a selection
+     weight; and a count the player set to 0 means "never". */
+  const _fCount=(k)=>_fMeta(k)[0];
   const _fChar=(k)=>_fMeta(k)[1];
+  const _INT_BY_CHAR={flow:1,speed:1,technical:2,elevation:2,structure:2,spectacle:3,absurd:3};
+  const _INT_OVR={straightaway:0,microsprint:0,wideopen:0,esschain:1,underpass:1,plates:1,
+    airgap:3,figure8:3,wallride:3,junction:3,megaelevation:3,hyperlane:2,bottleneck:2};
+  const _fInt=(k)=>{ const o=_INT_OVR[k]; if(o!=null)return o;
+    const c=_INT_BY_CHAR[_fChar(k)]; return c==null?1:c; };
+  const _featOff=(k)=>!!(dm._algoOverride&&dm._algoOverride['_feat_'+k]!=null&&+dm._algoOverride['_feat_'+k]<=0);
 
 // ═══ INTENSITY CURVE  The shape of the whole lap.
   const _CURVES=[
@@ -4547,7 +4938,14 @@ function _buildTrackImpl(seed){
   let _sigDone=false;
 
   // Seed the queue with DUPLICATES of the palette so every type appears
-  const _mustPlace=shuffled(_palette,rng);
+  const _mustPlace=shuffled(_palette,rng).filter(k=>!_featOff(k));
+  /* ═══ SCHEDULED COVERAGE (plan item 14)
+     Every palette type must appear, so each gets a planned slot spread
+     across 8%-85% of the lap. Once a slot is due, that type is offered first
+     and scores a lateness bonus — coverage happens through the lap instead
+     of by appending the leftovers in front of the finish line. */
+  const _mustPlan={};
+  _mustPlace.forEach((k,i)=>{ _mustPlan[k]=0.08+0.77*(i+0.5)/Math.max(1,_mustPlace.length); });
   let _lastChar=null, _lastInt=1;
 // Enough instances to place every chosen type plus generous extras.
   {
@@ -4586,7 +4984,11 @@ function _buildTrackImpl(seed){
   /* Resolved from the seed the same way the theme and geometry are, so all
      three agree on what the track is. */
   const _AFF=_CHAR_AFF[segments._char]||_CHAR_AFF.sweeper;
-  const _charAff=(cc)=>{ const v=_AFF[cc]; return (v==null)?0:v; };
+  /* Absurd pieces had no affinity entry at all (0 for every character).
+     Every track now wants some surprise; chaos and rollercoaster most. */
+  const _ABSURD_AFF={chaos:1.0,rollercoaster:0.6,gauntlet:0.45,canyon:0.4,alpine:0.35,drift:0.3,sprint:0.3};
+  const _charAff=(cc)=>{ if(cc==='absurd'){ const a=_ABSURD_AFF[segments._char]; return a==null?0.25:a; }
+    const v=_AFF[cc]; return (v==null)?0:v; };
 
   // ═══ PLACEMENT DIRECTOR
   let _phrase=0,_speedRun=0;   // (2) flow state
@@ -4594,11 +4996,16 @@ function _buildTrackImpl(seed){
     const want=clamp(_curve.f(clamp(prog,0,1)),0,1)*3;      // desired intensity 0..3
     const isSig=(!_sigDone&&prog>=_sigAt);
     let best=null,bestScore=-1e9;
+    let _due=null,_dueBy=0;
+    for(const k of _mustPlace){ const d=prog-_mustPlan[k]; if(d>=0&&d>=_dueBy){_dueBy=d;_due=k;} }
     for(let i=0;i<14;i++){
-      // Draw mostly from uncovered types early so the palette gets used.
-      const cand=(_mustPlace.length&&rng()<0.55)
+      // Draw mostly from uncovered types early so the palette gets used;
+      // the most overdue scheduled type is always the first candidate.
+      const cand=(i===0&&_due)?_due
+        :(_mustPlace.length&&rng()<0.55)
         ? _mustPlace[~~(rng()*_mustPlace.length)]
         : _rawPick();
+      if(_featOff(cand))continue;
       const ci=_fInt(cand), cc=_fChar(cand);
       let sc=0;
       sc+=_charAff(cc)*6.5;
@@ -4617,8 +5024,10 @@ function _buildTrackImpl(seed){
       if(prog>0.88&&ci>=2)sc+=1.6;
       // 7. calm opening so the player settles in
       if(prog<0.07&&ci<=1)sc+=2.2;
-      // 8. coverage bonus for types not yet used
-      if(_mustPlace.indexOf(cand)>=0)sc+=1.5;
+      // 8. coverage bonus for types not yet used, growing once its slot is due
+      if(_mustPlace.indexOf(cand)>=0){ sc+=1.5; const late=prog-_mustPlan[cand]; if(late>0)sc+=2.5+late*25; }
+      // 8b. the per-track count is a WEIGHT: more wanted, more often picked
+      sc+=Math.log(1+Math.max(0,_fCount(cand)))*0.8;
       // ═══ (2) FLOW RULES
       if(_lastChar==='technical'&&(cc==='speed'||cc==='flow'))sc+=2.4;
       if(_lastChar==='technical'&&cc==='technical')sc-=2.0;
@@ -4662,6 +5071,16 @@ function _buildTrackImpl(seed){
                      ||quiet>MAX_QUIET||boringRun>MAX_QUIET;
     if(wantStruct){
       const pick=_nextFeature(prog);
+      /* ═══ TELEGRAPH → PAYOFF (plan item 17)
+         A surprise lands when it follows calm. Absurd pieces (and half of
+         the spectacle ones) get a short, quiet run-in over a gentle rise,
+         so the piece is hidden until the crest. Flagged so the quiet-stretch
+         dressing does not fill the calm with chicanes. */
+      if(_fChar(pick)==='absurd'||(_fChar(pick)==='spectacle'&&rng()<0.5)){
+        const _t0=segments.length;
+        addRoad(8,12+~~(rng()*10),8,0,0.9*hillAmp);
+        for(let k=_t0;k<segments.length;k++)if(segments[k])segments[k].telegraph=true;
+      }
       _runEmit(pick);_structPlaced++;
       _lastFeatEnd=segments.length;
       const pInt=_fInt(pick);
@@ -4721,7 +5140,7 @@ function _buildTrackImpl(seed){
   let _guard=0;
   const _sweepCap=_lenTarget*1.10;
 // Exhaust the entire must-place queue — every type the player was shown in the preview MUST appear on the track.
-  {let _g2=0;while(_mustPlace.length&&_g2++<200){
+  {let _g2=0;dm._lastExhausted=_mustPlace.length;while(_mustPlace.length&&_g2++<200){
     _runEmit(_mustPlace.pop());_structPlaced++;
   }}
 // ── FINISH RUN-IN  Keep the approach to the line short and give it one last beat, rather than 160 segments of empty road.
@@ -4733,6 +5152,7 @@ function _buildTrackImpl(seed){
   // Stash the feature manifest for the preview UI + super-racing store.
   if(dm._lmUsed)_featCount.landmark=dm._lmUsed;
   dm._lastFeatures=_featCount;
+  dm._lastFeatLog=_featLog;
   dm._lastArch=archetype;
   dm._lastIsLong=_isLong;
   // ═══ Placement personality — 5 distinct patterns per seed
@@ -5572,7 +5992,8 @@ function _buildTrackImpl(seed){
     const MARK=['corkscrew','pipe','flyover','figure8','tunnel','halfpipe','multideck',
       'split','twist','airgap','junction','wallride','mesh','phase','hairpin','esschain',
       'narrows','bowl','slalom','plunge','climb','gauntlet','speedtrap','canyon',
-      'chicanewall','well','rumblezone','sweep','kink','terrace','gap','helix'];
+      'chicanewall','well','rumblezone','sweep','kink','terrace','gap','helix',
+      'absurdPiece','telegraph'];
 // isFeat: only structural/feature flags count, NOT curve magnitude. Mild curves (c < 3.
     const isFeat=(sg)=>{
       if(Math.abs(sg.curve||0)>=3.125)return true;
@@ -5587,28 +6008,48 @@ function _buildTrackImpl(seed){
     dress=(a,b)=>{
       const len=b-a;
       if(len<QUIET)return;
-      // Choose a treatment for this stretch and apply it across the run, so
-      // the road always has something to read and something to do.
-      const kind=~~(rng()*5);
-      // Inject sharp chicanes spaced every QUIET segs so no sub-run between
+      /* ═══ CHARACTER-AWARE DRESSING (plan items 5 + 16)
+         Every quiet stretch used to get the same treatment: a 4.2-5.7
+         chicane block every 28 segments, whatever the track was. That one
+         rhythm, on every course, is a large part of why tracks felt alike.
+         The stretch is now dressed in the track's own idiom — a speedway
+         gets fast sweepers, a technical course gets chicanes, an alpine or
+         rollercoaster course gets corners with undulation — and the
+         treatment table no longer tests kind===3 twice (the slalom branch
+         could never run). Injected corners are flagged so later passes
+         count them as features and do not re-dress the same road. */
+      const _ch=segments._char||'sweeper';
+      const _style=/speedway|sprint|marathon|sweeper/.test(_ch)?'fast'
+                  :/technical|labyrinth|gauntlet|drift/.test(_ch)?'tech'
+                  :/alpine|rollercoaster|canyon/.test(_ch)?'elev'
+                  :['fast','tech','elev'][~~(rng()*3)];
+      const _CFG={fast:{BLK:18,SPACE:50,C0:2.6,CR:1.0,flag:'sweep'},
+                  tech:{BLK:8, SPACE:28,C0:4.2,CR:1.5,flag:'kink'},
+                  elev:{BLK:12,SPACE:40,C0:3.2,CR:1.2,flag:'sweep'}}[_style];
       {
-        const BLK=8;         // corner block width in segments
-        const SPACE=28;      // gap between corner block centres
         let bd=(rng()<0.5?1:-1);
-        for(let pos=a+SPACE;pos<b-BLK;pos+=SPACE){
-          const C=4.2+rng()*1.5;
+        for(let pos=a+_CFG.SPACE;pos<b-_CFG.BLK;pos+=_CFG.SPACE){
+          const C=_CFG.C0+rng()*_CFG.CR;
           bd=-bd;
-          for(let k=pos;k<pos+BLK&&k<b;k++){
-            if(segments[k])segments[k].curve=bd*C;
+          for(let k=pos;k<pos+_CFG.BLK&&k<b;k++){
+            if(!segments[k])continue;
+            // Ease the block's ends so a sweeper is a sweeper, not a step.
+            const t=(k-pos)/Math.max(1,_CFG.BLK-1), env=Math.sin(Math.min(1,Math.max(0,t))*Math.PI);
+            segments[k].curve=bd*C*(_style==='tech'?1:(0.35+0.65*env));
+            segments[k][_CFG.flag]=true;
           }
         }
       }
-      if(kind===0){
-        // Already handled above — chicane is the primary treatment
-      } else if(kind===1){
+      const _TREAT={fast:['boost','arrows','none','boost'],
+                    tech:['none','slalom','narrow','none'],
+                    elev:['rumble','rumble','boost','none']}[_style];
+      const kind=_TREAT[~~(rng()*_TREAT.length)];
+      if(kind==='none'){
+        // the corners alone carry the stretch
+      } else if(kind==='boost'){
         // BOOST CAUSEWAY — with arrows, a speed reward
         for(let k=a;k<b;k++){segments[k].boost=((k%14)<7);segments[k].rush=1.14;}
-      } else if(kind===2){
+      } else if(kind==='arrows'){
         // ARROW LADDER — staggered speed arrows to thread
         for(let k=a;k<b;k+=9){
           for(let j=0;j<3&&k+j<b;j++){
@@ -5616,7 +6057,7 @@ function _buildTrackImpl(seed){
             segments[k+j].arrowX=0;   // centred — no lane weaving
           }
         }
-      } else if(kind===3){
+      } else if(kind==='rumble'){
         // RUMBLE / UNDULATION — rolling elevation you can feel.
         // CRITICAL: road vertices form a CHAIN — segment k's p2 must equal
         const y0=segments[a].p1.world.y;
@@ -5634,7 +6075,7 @@ function _buildTrackImpl(seed){
         }
         // Re-link to the following segment so the chain stays continuous.
         if(segments[b])segments[b].p1.world.y=segments[b-1].p2.world.y;
-      } else if(kind===3){
+      } else if(kind==='slalom'){
         // SLALOM GATES — a precision line through open road
         for(let k=a;k<b;k++){
           segments[k].slalom=true;
@@ -6414,32 +6855,10 @@ function _buildTrackImpl(seed){
       if(!nx||!nx.tube)sg.tubeFade=Math.min(sg.tubeFade||1,0.15);
     }
   }
-  {
-    // Track length now follows the character too. Measured spread was only
-    // length, so lap time never varied enough to feel like a different event.
-    const _wl=(function(){var w=_wtCfg();return (w&&w.lenMul)?w.lenMul:1;})();
-    const tl=_AO('_trackLength',1)*(segments._charLen||1)*_wl;
-    if(tl<0.95&&segments.length>400){
-      const keep=Math.max(300,Math.round(segments.length*Math.max(0.3,tl)));
-      segments.length=keep;
-      for(let i=0;i<segments.length;i++)segments[i].index=i;
-    }
-    else if(tl>1.05){
-      const want=Math.min(TRACK_MAX_SEGS,Math.round(segments.length*Math.min(3,tl)));
-      const src=segments.length;
-      for(let i=segments.length;i<want;i++){
-        const from=segments[i%src];
-        const c=Object.create(Object.getPrototypeOf(from));
-        for(const k in from)c[k]=from[k];
-        // Vertices must be fresh objects or the clones would share screen
-        // coordinates with their source and project on top of each other.
-        c.p1={world:{x:0,y:from.p1.world.y,z:i*SEG_LEN},camera:{},screen:{}};
-        c.p2={world:{x:0,y:from.p2.world.y,z:(i+1)*SEG_LEN},camera:{},screen:{}};
-        c.index=i;
-        segments.push(c);
-      }
-    }
-  }
+  /* Track length follows the character, World Tour leg and Algorithm Tool,
+     but it is applied to the director's _lenTarget before composition (see
+     LENGTH IS PLANNED, NOT PATCHED). The post-hoc resize that used to sit
+     here truncated composed laps or cloned their opening onto the end. */
   /* Maximum track length: TRACK_MAX_SEGS (15000 segments). Applied
      after the length adjustment so it binds whichever path produced the
      track, and before corner balancing so no corner is cut in half. */
@@ -7376,6 +7795,7 @@ function _buildTrackImpl(seed){
     }
   }catch(e){}
   try{ buildEnvironment(seed,theme?theme.biome:'forest'); }catch(e){ segments._env=null; }
+  try{ _composeRoadside(seed,theme?theme.biome:'forest'); }catch(e){}
   mapPts=[];let hx=0,hy=0,heading=0;
   let minX=0,maxX=0,minY=0,maxY=0;
   for(let i=0;i<segments.length;i++){
@@ -10328,18 +10748,89 @@ function _sOut(p,k){ return Math.pow(1-Math.min(1,Math.max(0,p)),(k||1)); }
    framing, lower for a tamer demo. */
 const _SHOT_TIGHTEN=0.90;
 
-function _shotGuard(o,p,idx){
+/* `u` is the position in the 7-second SLOT (0..1); `p` is the shot's own
+   progress, which runs `rate` times faster and then holds at 1. The neutral
+   ramps are keyed to the slot, not to p: keyed to p, a 3.5x shot reached p=1
+   after two seconds, ramped back to the chase view in 160 ms and idled there
+   for the remaining five — the opposite of the "finish sooner and hold the
+   end pose" the rate table promises. Callers without a slot time fall back
+   to p, which is the old behaviour. */
+function _shotGuard(o,p,idx,u){
   const r=0.08;
+  const t=(u===undefined)?p:u;
   var g;
-  if(idx!==undefined&&_SHOT_HARD_IN[idx]) g=(p>1-r)?_sStep((1-p)/r):1;
-  else g=(p<r)?_sStep(p/r):(p>1-r?_sStep((1-p)/r):1);
+  if(idx!==undefined&&_SHOT_HARD_IN[idx]) g=(t>1-r)?_sStep((1-t)/r):1;
+  else g=(t<r)?_sStep(t/r):(t>1-r?_sStep((1-t)/r):1);
     /* Seven axes now, and every one is ramped by the same envelope — so a shot that ends banked, pitched and forty segments up the road still returns to a neutral chase frame before the cut. */
   const T=_SHOT_TIGHTEN;
-  const _rawPitch=(o[3]||0)*g*T;
-  const _safePitch=Math.max(-0.55,Math.min(0.82,_rawPitch));
   const _rollOut=(idx===145) ? (o[4]||0) : (o[4]||0)*g*T;
-  return [o[0]*g*T, 1+(o[1]-1)*g*T, o[2]*g*T,
-          _safePitch, _rollOut, (o[5]||0)*g*T, (o[6]||0)*g*T];
+  return _camEnvelope([o[0]*g*T, 1+((o[1]==null?1:o[1])-1)*g*T, (o[2]||0)*g*T,
+          (o[3]||0)*g*T, _rollOut, (o[5]||0)*g*T, (o[6]||0)*g*T]);
+}
+/* The one pose function for an attract shot at slot time u (0..1). The
+   renderer and DriveMode.lintShots() both call it, so what the linter
+   checks is exactly what is drawn. */
+function _shotPose(idx,u){
+  const rate=_DEMO_RATE[idx]||1;
+  const p=Math.min(1,Math.max(0,u)*rate);
+  let raw=null;
+  try{ raw=_DEMO_SHOTS[idx](p); }catch(e){ raw=null; }
+  return _shotGuard(raw||[0,1,0],p,idx,u);
+}
+/* ═══ CAMERA ENVELOPE — one set of limits for every cinematic source
+   Demo shots, intro sweeps and debug views all drive the same seven orbit
+   axes, and each used to be clamped ad hoc (pitch only) or not at all. The
+   limits are the measured extremes of the shipped shot table (see
+   DriveMode.lintShots) with a little headroom, so no authored shot changes;
+   what they stop is a NaN or a runaway value reaching the projector, where
+   it becomes a torn road or an empty frame. Roll is left free: the barrel
+   roll shots are meant to turn all the way over. */
+const _CAM_ENV={yaw:[-6.6,6.6],zoom:[0.55,3.4],lift:[-0.60,2.60],
+                pitch:[-0.55,0.82],ztrav:[-60,60],xoff:[-1.6,1.6]};
+function _envClamp(v,lim,neutral){
+  if(!isFinite(v))return neutral;
+  return v<lim[0]?lim[0]:(v>lim[1]?lim[1]:v);
+}
+function _camEnvelope(o){
+  const E=_CAM_ENV;
+  return [_envClamp(o[0],E.yaw,0),  _envClamp(o[1],E.zoom,1), _envClamp(o[2],E.lift,0),
+          _envClamp(o[3],E.pitch,0), isFinite(o[4])?o[4]:0,
+          _envClamp(o[5],E.ztrav,0), _envClamp(o[6],E.xoff,0)];
+}
+/* ═══ ENCLOSURE-AWARE CAMERA (plan item 12)
+   A tunnel, tube or loop is drawn as a bore around the road's centre line,
+   seen from an eye that is assumed to be inside it. A cinematic pose that
+   swings the eye sideways, lifts it or yaws it round puts the eye INSIDE
+   THE WALL: the whole frame becomes vault colour (measured on the contact
+   sheet). While any enclosed segment is under or just ahead of the camera
+   the pose is eased into a bore-safe sub-envelope — quickly on the way in,
+   slowly on the way out, so leaving a tunnel reads as the shot resuming
+   rather than snapping. Roll is untouched: it only turns the canvas. */
+const _BORE_SAFE={yaw:[-0.22,0.22],zoom:[0.90,1.30],lift:[-0.05,0.12],
+                  pitch:[-0.10,0.10],ztrav:[-6,8],xoff:[-0.15,0.15]};
+let _encK=0, _encAt=0;
+function _encloseCamera(o){
+  let want=0;
+  try{
+    if(P&&segments&&segments.length){
+      const n=segments.length, base=Math.floor(P.z/SEG_LEN);
+      const back=12+Math.ceil(Math.max(0,-(o[5]||0)));
+      const ahead=80+Math.ceil(Math.max(0,o[5]||0));
+      for(let k=-back;k<=ahead;k++){
+        const g=segments[((base+k)%n+n)%n];
+        if(g&&(g.tunnel||g.tube||g.loop)){ want=1; break; }
+      }
+    }
+  }catch(e){}
+  const now=performance.now();
+  const dt=Math.min(0.1,Math.max(0,(now-(_encAt||now))/1000)); _encAt=now;
+  _encK+=(want-_encK)*Math.min(1,dt*(want>_encK?3.5:1.2));
+  if(dm._demoPin)_encK=want;             // pinned QA frames show the settled pose
+  if(_encK<0.002){ _encK=0; return o; }
+  const B=_BORE_SAFE, k=_encK;
+  const L=(v,lim)=>v+(Math.min(lim[1],Math.max(lim[0],v))-v)*k;
+  return [L(o[0],B.yaw),L(o[1],B.zoom),L(o[2],B.lift),L(o[3],B.pitch),o[4],
+          L(o[5],B.ztrav),L(o[6],B.xoff)];
 }
 
   /* Per-shot rate multipliers, indexed alongside _DEMO_SHOTS. 1 is the normal seven-second sweep; higher finishes the move sooner and holds the end pose. */
@@ -10368,6 +10859,12 @@ const _DEMO_RATE=[
   /* 145 ROUND AND ROUND — barrel roll along the line of sight. */
   1
 ];
+/* ZOOM IS A RATIO, ITS NEUTRAL IS 1 (plan item 13). Six shots (108, 118,
+   119, 126, 127, 133) wrote zoom as (1+X)*fade, which drives it to 0 —
+   unbounded magnification — as the fade closes. The old progress-keyed guard
+   happened to ramp them back before that showed; keyed to slot time it would
+   not. They now read 1+X*fade, which starts at the same value and fades to
+   neutral, as every other shot does. DriveMode.lintShots() reports it. */
 const _DEMO_SHOTS=[
   /*  0 CHASE — the standard following view, a rest between moves. */
   function(p){ return [0,1,0]; },
@@ -10752,7 +11249,7 @@ const _DEMO_SHOTS=[
     return [osc*e, 1+0.60*e, 0.06*e, 0.10*e, 0.06*osc, 0, 2.10*e]; },
 
   function(p){ const o=_sOut(p,0.70), k=_sStep(p);
-    return [0, (2.80-0.55*k)*o, (0.60-0.40*k)*o, (0.52-0.18*k)*o,
+    return [0, 1+(1.80-0.55*k)*o, (0.60-0.40*k)*o, (0.52-0.18*k)*o,
             0.04*Math.sin(p*Math.PI*2)*o, (35-10*k)*o, 0]; },
 
     /* 109 CIRCUIT BREAKER — alternating snap-zooms on opposite sides of the car with a roll reversal on each beat; three-beat rhythm at the fastest clip rate in the set. */
@@ -10805,11 +11302,11 @@ const _DEMO_SHOTS=[
   /* 118 WHIP PAN LEFT — near-instant 120° yaw snap with heavy motion blur
         implied by the extreme zoom pulse at the midpoint. Hard-in. */
   function(p){ const o=_sOut(p,0.85), b=Math.sin(p*Math.PI);
-    return [(-2.00+4.00*p)*o, (1+1.4*b)*o, 0.10*o, 0.14*o, 0.18*b*o, 0, 0]; },
+    return [(-2.00+4.00*p)*o, 1+1.4*b*o, 0.10*o, 0.14*o, 0.18*b*o, 0, 0]; },
 
   /* 119 WHIP PAN RIGHT — the mirror, so the pair can play back-to-back. */
   function(p){ const o=_sOut(p,0.85), b=Math.sin(p*Math.PI);
-    return [(2.00-4.00*p)*o, (1+1.4*b)*o, 0.10*o, 0.14*o, -0.18*b*o, 0, 0]; },
+    return [(2.00-4.00*p)*o, 1+1.4*b*o, 0.10*o, 0.14*o, -0.18*b*o, 0, 0]; },
 
   /* 120 CRANE DESCENT — starts extremely high looking straight down, then
         descends and pitches level, ending in a normal chase. A reveal. */
@@ -10847,11 +11344,11 @@ const _DEMO_SHOTS=[
         on Z while zooming in, so the car stays the same size but the
         background rushes toward the viewer. */
   function(p){ const e=_sEase(p);
-    return [0, (1+1.6*p)*e, 0.15*e, 0.12*e, 0, (-24*p)*e, 0]; },
+    return [0, 1+1.6*p*e, 0.15*e, 0.12*e, 0, (-24*p)*e, 0]; },
 
   /* 127 FORWARD DOLLY ZOOM — the inverse; background compresses outward. */
   function(p){ const e=_sEase(p);
-    return [0, (2.6-1.6*p)*e, 0.15*e, 0.12*e, 0, (24*p)*e, 0]; },
+    return [0, 1+(1.6-1.6*p)*e, 0.15*e, 0.12*e, 0, (24*p)*e, 0]; },
 
   /* 128 SPIRAL DIVE — descends from high altitude in a tightening spiral,
         yaw rate accelerating as lift drops. */
@@ -10887,7 +11384,7 @@ const _DEMO_SHOTS=[
   /* 133 SNAP ZOOM CHAIN — four discrete zoom steps with a yaw kick on each,
         like a rapid cut sequence compressed into one shot. Hard-in. */
   function(p){ const o=_sOut(p,0.92), st=Math.floor(p*4)/4, b=(p*4)%1;
-    return [((st*4)%2?0.9:-0.9)*o, (1+st*1.6+b*0.25)*o, 0.2*o,
+    return [((st*4)%2?0.9:-0.9)*o, 1+(st*1.6+b*0.25)*o, 0.2*o,
             0.16*o, ((st*4)%2?0.14:-0.14)*o, st*20*o, 0]; },
 
   /* 134 FINAL SWEEP — a grand closing move: high wide orbit descending to a
@@ -10972,15 +11469,63 @@ function _interpBodies(t){
   }
 }
 
+/* Reset every smoothed camera-dependent measurement so the next frame seeds
+   from its own projection instead of easing over from the previous view.
+   Called on a shot change and on any in-shot discontinuity. */
+function _camCutReset(){
+  /* FIX 4+13: reset smoothed ground measurements immediately on cut so
+     they seed from this frame's projection rather than easing over ~16 frames. */
+  dm._roadTopSm=null;
+  dm._roadGradSm=null;
+  dm._roadGrad=0;
+  dm._shotCut=true;   // FIX 5: consumed by DDE block to jump toward the new value
+  /* _horizonY is NOT cleared here: it is recomputed from the new camera later in this same frame (sky pass). */
+  dm._carRoadY=null;
+  dm._carRoadK=0;
+  dm._carRoadKSm=1;     // fully pinned immediately in attract mode
+  dm._carScaleK=1;
+  dm._boreEase=null;
+  dm._boreFade=null;
+}
 function renderWorld(vw,vh,camPan){
     /* (2) ORIENTATION GUARANTEE FOR ATTRACT MODE. Enforced at the TOP of the render, before anything reads _camMode. */
   /* Attract mode drives the orbit itself, so first person (the only remaining
      discrete mode) must not be active while it does. */
   if(dm.demo&&_camMode===5)_camMode=0;
+  /* ═══ NEUTRAL BASE CAMERA IN DEMO (plan item 9)
+     Every shot in the table is authored relative to the home chase distance.
+     A different base distance changes the eye height and FOV UNDER every
+     shot, so a lifted shot became a satellite view and a low skim went into
+     the road. The demo always runs at home distance. */
+  if(dm.demo)_camDist=_CAM_DIST_HOME;
     /* ── DEMO SHOWCASE VIEWS  One hundred presentation angles, cycled one every 7 seconds — so the attract loop runs 11.7 minutes before it repeats itself. */
   if(dm.demo&&race&&race.attract){
       /* ═══ PER-SHOT PACING (item 4)  Every shot ran at the same rate, so a cycle of fifty moved with one tempo throughout. */
-    const _sh=Math.floor(_demoClock/7)%_DEMO_SHOTS.length;
+    const _pin=dm._demoPin;   // QA: DriveMode.demoPin(idx,p) freezes one shot pose
+    /* ═══ SUB-TICK SHOT CLOCK (plan item 6)
+       _demoClock advances in whole 1/60 s physics steps, but every body is
+       drawn interpolated between steps (dm._alpha). Sampling the shot at the
+       raw tick clock made the camera move in 60 Hz steps while the car glided
+       at the display rate — a judder on every 120/144 Hz screen. The shot is
+       sampled at the same sub-tick instant the bodies are drawn at. */
+    const _clk=_demoClock+Math.max(0,Math.min(1,dm._alpha||0))*STEP;
+    const _sh=_pin?(((_pin.idx|0)%_DEMO_SHOTS.length)+_DEMO_SHOTS.length)%_DEMO_SHOTS.length
+                  :Math.floor(_clk/7)%_DEMO_SHOTS.length;
+    /* ═══ TRACK CHANGES ON SHOT BOUNDARIES (plan item 10)
+       The shell used to change demo track on a wall-clock 21 s interval
+       while shots run on this physics clock; any dropped frame made the two
+       drift and a track change cut a shot mid-move. The engine now tells the
+       shell when three shots have played. Deferred: it must not tear the
+       race down from inside its own render. */
+    {
+      const _slot=Math.floor(_clk/21);
+      if(dm._demoTrackSlot==null)dm._demoTrackSlot=_slot;
+      else if(_slot!==dm._demoTrackSlot){
+        dm._demoTrackSlot=_slot;
+        if(!_pin&&typeof window!=='undefined'&&window.ZS_demoTrackDue)
+          setTimeout(function(){ try{ window.ZS_demoTrackDue(); }catch(e){} },0);
+      }
+    }
     /* ═══ SHOT TRANSITION RESET When the shot index advances the camera jumps to a completely new position. */
     if(dm._lastDemoShot!==_sh){
       dm._lastDemoShot=_sh;
@@ -10990,23 +11535,24 @@ function renderWorld(vw,vh,camPan){
           if(P&&!isFinite(P.z))P.z=0;
         }
       }catch(e){}
-      /* FIX 4+13: reset smoothed ground measurements immediately on cut so
-         they seed from this frame's projection rather than easing over ~16 frames. */
-      dm._roadTopSm=null;
-      dm._roadGradSm=null;
-      dm._roadGrad=0;
-      dm._shotCut=true;   // FIX 5: consumed by DDE block to jump 88% toward new value
-      /* _horizonY is NOT cleared here: it is recomputed from the new camera later in this same frame (sky pass). */
-      dm._carRoadY=null;
-      dm._carRoadK=0;
-      dm._carRoadKSm=1;     // fully pinned immediately in attract mode
-      dm._carScaleK=1;
-      dm._boreEase=null;
-      dm._boreFade=null;
+      _camCutReset();
     }
-    const _rate=_DEMO_RATE[_sh]||1;
-    const _p=Math.min(1,((_demoClock%7)/7)*_rate);
-    const _o=_shotGuard(_DEMO_SHOTS[_sh](_p),_p,_sh);
+    const _u=_pin?Math.min(1,Math.max(0,+_pin.p||0)):((_clk%7)/7);
+    const _o=_encloseCamera(_shotPose(_sh,_u));
+    /* ═══ ANY CAMERA DISCONTINUITY IS A CUT (plan item 13)
+       The smoothed ground measurements were only reset when the shot INDEX
+       changed. Shots 133 and 136 cut inside themselves (stepped moves, by
+       design), and those jumps left the ground and the draw distance easing
+       toward the new view over a dozen frames — the "ground filling in"
+       seen after a snap. A pose that jumps further in one frame than any
+       continuous move can is treated exactly like a shot change. */
+    {
+      const L=dm._lastPose;
+      if(L&&(Math.abs(_o[0]-L[0])>0.35||Math.abs(_o[1]-L[1])>0.35||Math.abs(_o[2]-L[2])>0.35
+           ||Math.abs(_o[3]-L[3])>0.20||Math.abs(_o[5]-L[5])>6||Math.abs(_o[6]-L[6])>0.40))
+        _camCutReset();
+      dm._lastPose=_o;
+    }
     dm._orbitAz=_o[0]; dm._orbitZoom=_o[1]; dm._orbitLift=_o[2];
     dm._orbitPitch=_o[3]; dm._orbitRoll=_o[4];
     dm._orbitZ=_o[5];    dm._orbitX=_o[6];
@@ -11017,10 +11563,12 @@ function renderWorld(vw,vh,camPan){
   /* Intro camera (styles 64-191) drives the same orbit axes as demo shots. */
   else if(dm._introCam&&race&&race.intro){
     const _ic=dm._introCam;
-    dm._orbitAz=_ic.az;      dm._orbitZoom=_ic.zoom;
-    dm._orbitLift=_ic.lift;  dm._orbitPitch=_ic.pitch;
-    dm._orbitRoll=_ic.roll;  dm._orbitZ=_ic.ztrav;
-    dm._orbitX=_ic.xoff;     dm._camZoom=_ic.zoom;
+    /* Same envelope as the demo shots (plan item 7). */
+    const _io=_encloseCamera(_camEnvelope([_ic.az,_ic.zoom,_ic.lift,_ic.pitch,_ic.roll,_ic.ztrav,_ic.xoff]));
+    dm._orbitAz=_io[0];      dm._orbitZoom=_io[1];
+    dm._orbitLift=_io[2];    dm._orbitPitch=_io[3];
+    dm._orbitRoll=_io[4];    dm._orbitZ=_io[5];
+    dm._orbitX=_io[6];       dm._camZoom=_io[1];
   }
   const _frameNow=performance.now();  // cached once — used instead of animNow() in render loop
   const now=animNow();
@@ -12093,7 +12641,12 @@ function renderWorld(vw,vh,camPan){
         : (dm._dbgView.roll||0);
       dm._orbitZ=dm._dbgView.ztrav||0;
       dm._orbitX=dm._dbgView.xoff||0;
-      dm._camZoom=dm._dbgView.zoom;
+      /* Debug viewpoints obey the same envelope as the demo (plan item 7). */
+      const _dv=_camEnvelope([dm._orbitAz,dm._orbitZoom,dm._orbitLift,dm._orbitPitch,
+                              dm._orbitRoll,dm._orbitZ,dm._orbitX]);
+      dm._orbitAz=_dv[0]; dm._orbitZoom=_dv[1]; dm._orbitLift=_dv[2];
+      dm._orbitPitch=_dv[3]; dm._orbitRoll=_dv[4]; dm._orbitZ=_dv[5]; dm._orbitX=_dv[6];
+      dm._camZoom=dm._orbitZoom;
     }
     else if(dm._bumpCamOrbit){
       // Cinematic bump camera — overrides all orbit values
@@ -12132,6 +12685,21 @@ function renderWorld(vw,vh,camPan){
 // Pivot Z is the car's own position along the track, which is the chase distance ahead of the eye.
     /* The pivot stays on the MACHINE, not on the eye. Z-traverse deliberately separates the two: if the pivot travelled with the camera the orbit would swing around empty road and the car would never be the subject of the  */
   dm._pivotZ=((P._rz!==undefined)?P._rz:P.z)+SEG_LEN*4.5;
+  /* Occluder box for this frame (see CAMERA-OCCLUDER FADE). The car sits at
+     the orbit pivot, so its camera depth is independent of yaw. The screen
+     box comes from last frame's machine draw, which is one frame stale and
+     therefore smooth enough for a fade. */
+  {
+    const _cine=!!((race&&(race.attract||race.intro))||dm._dbgView);
+    const _cd=(4.5-(dm._orbitZ||0))*SEG_LEN;
+    const O=dm._occl||(dm._occl={});
+    O.on=_cine&&_cd>SEG_LEN&&dm._carDrawX!=null&&isFinite(dm._carDrawX)&&dm._carDrawY!=null;
+    if(O.on){
+      O.depth=_cd;
+      O.x0=dm._carDrawX-vw*0.08; O.x1=dm._carDrawX+vw*0.08;
+      O.y0=dm._carDrawY-vh*0.16; O.y1=dm._carDrawY+vh*0.03;
+    }
+  }
   dm._camY=camY;   // store for drawProp ground-pinning
   dm._camX=camX; dm._camZ=camZ; dm._camVW=vw; dm._camVH=vh;
   try{ dm._segFloorA=PAL.floorA; dm._segFloorB=PAL.floorB; }catch(e){}
@@ -15077,6 +15645,7 @@ function drawProp(sp,vw,vh){
   let fade=Math.min(1,Math.max(0,(_dFar-sp.n)/(_dFar*0.96)))*_sizeFade;
   fade=fade*fade*(3-2*fade);
   if(_propCaching)fade=1;
+  else if(dm._occl&&dm._occl.on)fade*=_occlK(p.camera.z,_bMinX,_bMaxX,y0-h,y0,vw,vh);
   if(fade<=0.0015)return;
   ctx.save();
   if(_needsClip&&!_isOverhead){
@@ -20699,6 +21268,8 @@ function injectTitleButton(){
 })(20);
 
 // ─── PUBLIC + DEBUG
+const _FEAT_ABSURD=['rainbowroad','turbotornado','mirrorstraight','zigzagstorm','megaelevation',
+  'cliffdrop','rollerwave','spiralstair','blindsnap','slingshot'];
 window.DriveMode={start,exit,get active(){return dm.active;},
   isActive:()=>!!dm.active, setMusicMuted:setMusicMuted, isMusicMuted:()=>_musMuted,
   /* The seed of the race currently loaded. Used by the continue prompt to
@@ -20746,6 +21317,32 @@ window.DriveMode={start,exit,get active(){return dm.active;},
     return {corr:Math.abs(num/Math.sqrt(dl*ds||1)), minLaneGap:gap, n:n};
   },
   demoShots:()=>({shots:_DEMO_SHOTS.length,rates:_DEMO_RATE.length}),
+  /* QA: sample every attract shot over its whole 7-second slot at 60 Hz,
+     through the same guard and envelope the renderer applies, and report
+     per-axis ranges, non-finite values and the largest single-frame jump
+     (a cut is only allowed at the slot boundary). */
+  lintShots:()=>{
+    const AX=['yaw','zoom','lift','pitch','roll','ztrav','xoff'];
+    const rng={}; AX.forEach(a=>rng[a]=[Infinity,-Infinity]);
+    const bad=[], jumps=[];
+    for(let i=0;i<_DEMO_SHOTS.length;i++){
+      let prev=null, worst=0, worstAx='';
+      for(let f=0;f<=420;f++){
+        const o=_shotPose(i,f/420);
+        for(let a=0;a<7;a++){
+          const v=o[a];
+          if(!isFinite(v)){ bad.push({shot:i,t:+(f/420).toFixed(3),axis:AX[a]}); continue; }
+          if(v<rng[AX[a]][0])rng[AX[a]][0]=v; if(v>rng[AX[a]][1])rng[AX[a]][1]=v;
+          if(prev){ const d=Math.abs(v-prev[a])/(a===5?40:1); if(d>worst){worst=d;worstAx=AX[a];} }
+        }
+        prev=o;
+      }
+      jumps.push({shot:i,maxStep:+worst.toFixed(4),axis:worstAx});
+    }
+    jumps.sort((a,b)=>b.maxStep-a.maxStep);
+    for(const a of AX)rng[a]=rng[a].map(v=>+v.toFixed(3));
+    return {shots:_DEMO_SHOTS.length,ranges:rng,nonFinite:bad.slice(0,20),worstSteps:jumps.slice(0,12)};
+  },
   backReach:()=>{
     var worst=null;
     for(var i=0;i<_DEMO_SHOTS.length;i++){
@@ -20776,6 +21373,67 @@ window.DriveMode={start,exit,get active(){return dm.active;},
   /* Attract-mode shot clock, reset when the demo starts. Exposed because the
      demo scheduler lives in the shell scope, outside this closure. */
   resetDemoClock:()=>{ _demoClock=0; },
+  /* QA: freeze the attract camera on one shot at progress p (0..1), or pass
+     null to resume the cycle. Used by the contact-sheet harness. */
+  demoPin:(idx,p)=>{ dm._demoPin=(idx==null)?null:{idx:idx|0,p:+p||0}; },
+  /* QA: build a seed exactly as start() would (theme first) and return the
+     numbers the generation audit tracks: pacing, feature spread, roadside
+     coherence. Refuses while a race is live — it replaces the segments. */
+  auditTrack:(sd)=>{
+    if(dm.active)return null;
+    const keepTheme=theme;
+    try{
+      sd=sd>>>0; theme=makeTheme(sd); buildTrack(sd);
+      const N=segments.length, o={seed:sd,segs:N,char:segments._char,arch:dm._lastArch,
+        biome:theme.biome,themeName:theme.trackTheme&&theme.trackTheme.name,curve:dm._lastCurve};
+      let absC=0,sharp=0,maxRun=0,run=0,yMin=1e9,yMax=-1e9,maxSlope=0;
+      for(let i=0;i<N;i++){ const g=segments[i], c=Math.abs(g.curve||0); absC+=c;
+        if(c>=3.125){sharp++; run=0;} else { run++; if(run>maxRun)maxRun=run; }
+        const y=g.p2.world.y; if(y<yMin)yMin=y; if(y>yMax)yMax=y;
+        maxSlope=Math.max(maxSlope,Math.abs(g.p2.world.y-g.p1.world.y)/SEG_LEN); }
+      o.meanCurve=+(absC/N).toFixed(3); o.sharpPct=+(sharp/N*100).toFixed(1);
+      o.longestMild=maxRun; o.elevRange=Math.round(yMax-yMin); o.maxSlope=+maxSlope.toFixed(2);
+      const log=dm._lastFeatLog||[];
+      o.features=log.length; o.featureKinds=new Set(log.map(f=>f.k)).size;
+      /* Share of feature emissions that land in the last 12% of the lap —
+         a high number means the director dumped leftovers at the end. */
+      o.tailDump=+(log.filter(f=>f.a>N*0.88).length/Math.max(1,log.length)).toFixed(2);
+      /* Roadside coherence, per 150-segment window and side: how many
+         distinct tree forms stand together, the hue spread of those trees,
+         and buildings with no neighbour within 40 segments (orphans). */
+      const W=150; let forms=0,hueSd=0,wins=0,trees=0,blds=0,orph=0,land=0;
+      const bldAt={'-1':[],'1':[]};
+      const list=(g)=>{const a=[];if(g.sprite)a.push(g.sprite);if(g.sprite2)a.push(g.sprite2);
+        if(g.extraVeg)for(const e of g.extraVeg)a.push(e);return a;};
+      for(let i=0;i<N;i++)for(const sp of list(segments[i])){
+        if(sp.veg==='tree')trees++; else if(sp.veg==='land')land++;
+        else if(!sp.veg){blds++; bldAt[sp.side<0?'-1':'1'].push(i);} }
+      for(const k in bldAt){ const a=bldAt[k]; for(let j=0;j<a.length;j++){
+        const nb=(j>0&&a[j]-a[j-1]<=40)||(j<a.length-1&&a[j+1]-a[j]<=40); if(!nb)orph++; } }
+      for(let w0=0;w0+W<=N;w0+=W)for(const sd2 of [-1,1]){
+        const fs=new Set(), hs=[];
+        for(let i=w0;i<w0+W;i++)for(const sp of list(segments[i])){
+          if(sp.veg!=='tree'||sp.side!==sd2)continue;
+          fs.add((sp.tf|0)%12); if(sp.hueAbs!=null)hs.push(sp.hueAbs); }
+        if(!fs.size)continue;
+        wins++; forms+=fs.size;
+        if(hs.length>1){ let sx=0,sy=0; for(const h of hs){sx+=Math.cos(h*Math.PI/180);sy+=Math.sin(h*Math.PI/180);}
+          const R=Math.sqrt(sx*sx+sy*sy)/hs.length; hueSd+=Math.sqrt(-2*Math.log(Math.max(1e-6,R)))*180/Math.PI; }
+      }
+      let eco=0; for(let i=0;i<N;i++)if(segments[i]._eco&&segments[i]._eco!==theme.biome)eco++;
+      o.ecotonePct=+(eco/N*100).toFixed(1);
+      o.trees=trees; o.buildings=blds; o.landforms=land; o.env=(segments._env&&segments._env.k.length)||0;
+      o.formsPerWindow=+(forms/Math.max(1,wins)).toFixed(2);
+      o.treeHueSpread=+(hueSd/Math.max(1,wins)).toFixed(1);
+      o.orphanBldPct=+(orph/Math.max(1,blds)*100).toFixed(1);
+      o.featLog=log.map(f=>f.k+'@'+(f.a/N).toFixed(2));
+      o.featLost=log.filter(f=>f.a>=N).length;          // placed, then cut off the lap
+      o.exhausted=dm._lastExhausted||0;                 // appended by the must-place safety net
+      o.absurd=log.filter(f=>_FEAT_ABSURD.indexOf(f.k)>=0).length;
+      return o;
+    }catch(e){ return {seed:sd,error:e.message}; }
+    finally{ theme=keepTheme; }
+  },
   setSfxMuted:setSfxMuted, isSfxMuted:()=>_sfxMuted,
 // ── Standalone-shell API (race.html)  race.
   trackName:(sd)=>{try{const b=BIOME_DEFS[makeTheme(sd>>>0).biome];
@@ -20901,6 +21559,8 @@ const _SR_FEAT_LABELS={
   ramp:'Jump Ramp', gap:'Chasm Gap', boost:'Boost Pad', bridge:'Bridge',
   tube:'Tube Run', underpass:'Underpass', mirrorstraight:'Mirror Straight',
   zigzagstorm:'Zig-Zag Storm', megaelevation:'Mega Elevation',
+  cliffdrop:'Cliff Drop', rollerwave:'Roller Wave', spiralstair:'Spiral Stair',
+  blindsnap:'Blind Snap', slingshot:'Slingshot',
   turbotornado:'Turbo Tornado', rainbowroad:'Rainbow Road',
   absurd_spaghetti:'Spaghetti Section', absurd_staircase:'Staircase Climb',
   absurd_ribbon:'Ribbon Narrows', absurd_pinch:'Pinch Section',
@@ -20984,6 +21644,7 @@ const _SR_FEAT_ORDER=[
   'absurd_spaghetti','absurd_staircase','absurd_ribbon','absurd_pinch',
   'absurd_megatube','absurd_washboard','weather',
   'tube','bridge','underpass','mirrorstraight','zigzagstorm','megaelevation',
+  'cliffdrop','rollerwave','spiralstair','blindsnap','slingshot',
   'turbotornado','rainbowroad','ramp','gap','boost',
   'verticalloop','hyperlane','bottleneck',
   'flyover','split','corkscrew','phase','wallride','mesh',
@@ -23335,12 +23996,21 @@ function startDemo(){
   raiseTitleAboveDemo();
   if(_demoOn)return;
   _demoOn=true;nextDemoTrack();
-  /* 21s, not 15s: a multiple of the 7s shot length, so a track change lands on
-     a shot boundary instead of cutting one off part-way through its move. */
-  _demoTimer=setInterval(nextDemoTrack,21000);
+  /* Track changes are driven by the ENGINE's shot clock (window.ZS_demoTrackDue,
+     every three 7 s shots), so a change always lands on a shot boundary. The
+     wall-clock interval it replaces drifted from the physics clock whenever
+     frames were dropped. This interval is only a watchdog for an engine that
+     has stopped signalling (e.g. a render exception): it changes track only
+     when no signal has arrived for a minute — long enough that a slow device,
+     whose physics clock runs behind the wall clock, is never pre-empted. */
+  _demoTimer=setInterval(function(){
+    if(Date.now()-_demoTrackAt>60000)nextDemoTrack();
+  },5000);
   try{ if(window.DriveMode&&window.DriveMode.resetDemoClock)
          window.DriveMode.resetDemoClock(); }catch(e){}
 }
+var _demoTrackAt=0;
+try{ window.ZS_demoTrackDue=function(){ if(_demoOn)nextDemoTrack(); }; }catch(e){}
 function nextDemoTrack(){
   if(!_demoOn||_screen!=='title')return;
   if(_realRaceRunning()){ _demoOn=false; return; }
@@ -23365,14 +24035,11 @@ function nextDemoTrack(){
     if(window.DriveMode.isActive&&window.DriveMode.isActive()&&window.DriveMode.exit)
       window.DriveMode.exit();
     const sd=((Date.now()>>>0)^((Math.random()*4294967296)>>>0))>>>0||1;
+    _demoTrackAt=Date.now();
     window.DriveMode.start(sd,{demo:true});
-    // (8) Random viewpoint per attract track.
-    setTimeout(()=>{try{if(window.DriveMode.setCamera)
-      // Modes 0,1,3,4,5 only — 2 is OVERHEAD and reads as an upside-down
-      // track in attract mode.
-      var cams=[0,1,3,4,5];
-      window.DriveMode.setCamera(cams[Math.floor(Math.random()*cams.length)]);
-    }catch(e){}},400);
+    /* No random base viewpoint any more: the shot table is authored against
+       the home chase distance, and the engine pins it while the demo runs
+       (see NEUTRAL BASE CAMERA IN DEMO). Variety comes from the shots. */
   }catch(e){}
 }
 function stopDemo(){
