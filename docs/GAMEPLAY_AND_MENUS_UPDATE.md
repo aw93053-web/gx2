@@ -117,3 +117,53 @@ Over 40 seeds, speedway banking appears on 30 tracks. The feature count and its 
   - The result screen follows, then the map with the dot reveal.
   - Unlocked goes 8 → 10, and the new settlement is selected.
 - Super Racing: browse → Track Lab (every tab) → race. The palette override reaches the race. No page errors anywhere.
+
+---
+
+# Round 2: fixes and the Track Lab plan
+
+## Fixes
+
+1. **Game over YES/NO ignored the d-pad and stick.** `continueOpen()` lives in the shell and checked the engine's `race`, which the shell cannot see. The check threw and was swallowed, so the prompt was drawn but never counted as open. It now reads `DriveDebug._state()`. Tested: keyboard ←/→, d-pad and left stick all move the selection.
+2. **PlayStation glyphs on an Xbox pad.** Microsoft reports "Xbox Wireless Controller", which contains Sony's generic "Wireless Controller", and the Sony pattern was tested first. Xbox is now matched first in both detectors.
+3. **Rival times on the champion screen.** A winner finishes before anyone else, so every rival showed "—". The board now fills in real times as rivals finish. Until then it shows a projected time (≈), from remaining distance and current pace, and re-sorts as times firm up.
+4. **World Tour text is 30% larger.** This covers the result/celebration text, rewards and unlock lines, the "NEW TRACK UNLOCKED" labels, settlement names on the map and the selected-town details.
+5. **The BUMP LANDED card** is now a DOM overlay pinned to the top of the screen, in the `t-logo` fire style.
+6. **Track-feature toasts removed:** special-section names, sideways surge, corkscrew rush, speed rush / tube boost, zigzag storm, off-camber, guide beam slam, speed-up arrows, jump / high road, junctions shifted, lost grip and tunnel hub.
+7. **Rival lock-on alert.** The toast is replaced by two red down-arrows, one each side of the player's car, bobbing and swaying. Between them sits a small `t-logo` alert, "RIVAL LOCKED ON YOU / TURBO TO ESCAPE". The red screen frame stays.
+8. **A landed bump costs 20% energy.** The lock preview and the card show this.
+9. **Tunnel effects doubled.** 81% of tunnels now carry animated walls, up from 40.5%. One in five of those runs at **double intensity**: the frame is added onto itself (2× light), with 1.7× stroke width and 1.45× flow speed.
+10. **The lock-on crosshair no longer lands on empty space.** It was placed by re-projecting the target's segment, which is stale or wrong when the rival is over a crest or past the draw distance. Now:
+    - every rival records where it was actually drawn, and the crosshair follows that position, eased;
+    - only rivals drawn in the last 3 frames can be locked;
+    - if the target is briefly hidden, the crosshair holds its last position at reduced opacity.
+
+## Super Racing Track Lab: 20-step plan
+
+| # | Step | Status |
+|---|---|---|
+| 1 | Wider ranges in the lab: continuous settings from ½ × min to 2 × max, feature counts doubled, probabilities over the full 0–100%. The random roll keeps the old ranges. | done |
+| 2 | Engine clamps widened so the new ranges matter: track length ×4 (was ×3), laps 1–12, rivals 0–7. | done |
+| 3 | Hold-to-accelerate on ◀▶: the step grows ×1 → ×2 → ×5 → ×12 at 0.6 / 1.3 / 2.2 s, and repeats every 45 ms. | done |
+| 4 | LT/RT fast adjust scaled to each setting's range (1/80 of range per step, 6 steps per tick). | done |
+| 5 | New **TUNNELS** tab. | done |
+| 6 | Animated-wall share (`_tunFxOdds`). | done |
+| 7 | Intense-wall share (`_tunFxIntense`). | done |
+| 8 | Force one of the 48 wall patterns (`_tunFxPattern`). | done |
+| 9 | Force the wall palette (`_tunFxPalette`). | done |
+| 10 | Wall flow speed (`_tunFxSpeed`). The tunnel bore counts (tunnel, pipe, vertical loop, boreholes, smoky bores) sit in the same tab. | done |
+| 11 | Default marker on every bar. | done |
+| 12 | Changed settings marked with a dot; each tab shows a count badge. | done |
+| 13 | Readable values: %, ×n, OFF, names, AUTO. | done |
+| 14 | Range and default shown under the description. | done |
+| 15 | View resets the selected setting, L3 resets the tab (keyboard: Backspace / Delete). | done |
+| 16 | Selected row highlighted with ◀ ▶ around the value. | done |
+| 17 | Tab header with the tab's purpose, in its accent colour. | done |
+| 18 | Two-line rows: full names (no truncation) with value, and a larger bar beneath. | done |
+| 19 | Absurd feature types highlighted in the FEATURES grid. | done |
+| 20 | Keyboard parity (Q/E tabs, R shuffle, Shift+←/→ fast, Backspace/Delete reset) and an updated key strip. | done |
+
+**Review notes**
+- Persisting lab edits across browsed tracks was considered and dropped. Edits belong to the track being tuned, and history browsing relies on that.
+- The wider ranges apply only to lab edits, so random tracks do not get more extreme.
+- Tunnel overrides are read only in races launched from Super Racing. World Tour clears the override set.

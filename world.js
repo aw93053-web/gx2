@@ -2146,7 +2146,7 @@ function drawSettlement(ctx,st,cx,cy,rad,selD,pulse,idx){
   }
   /* (1) 35% smaller: at the previous size long names overlapped neighbouring
      markers, which the screenshot shows clearly. */
-  ctx.font=Math.max(5,Math.round(r*0.66))+"px 'Germania One','Press Start 2P',serif";   // (2) -30%
+  ctx.font=Math.max(11,Math.round(r*0.86))+"px 'Germania One','Press Start 2P',serif";   // +30% (request 4 item 3)
   ctx.textAlign='center';ctx.textBaseline='top';
   ctx.fillStyle=selD?'#bfe8ff':(open?'#8fa8b8':'#4a5a66');
   /* (4) Name centred ON the marker rather than hanging below it, so it sits
@@ -2305,11 +2305,12 @@ function drawHud(ctx,vw,vh){
   var it=MapState.items[MapState.sel];
   if(it&&MapState.level==='muni'){
     ctx.textAlign='left';
+    ctx.font="12px 'Press Start 2P',monospace";   // +30% (request 4 item 3)
     ctx.fillStyle='#bfe8ff';
     /* (7) Lines spaced 22px apart rather than 16, for readability. */
-    ctx.fillText(W.displayName(it),116,vh-166);
+    ctx.fillText(W.displayName(it),116,vh-178);
     ctx.fillStyle='#8fa8b8';
-    ctx.fillText(it.typeLabel+'   POP '+it.population.toLocaleString(),116,vh-144);
+    ctx.fillText(it.typeLabel+'   POP '+it.population.toLocaleString(),116,vh-150);
     ctx.fillStyle='#6f8fa0';
     ctx.fillText(it.race.laps+' LAPS   '+it.race.turbo+' TURBO'+
       (W.isCompleted(it.id)?'   \u2713 WON':(W.isUnlocked(it.id)?'':'   LOCKED')),116,vh-122);
@@ -4678,9 +4679,9 @@ function drawTourCelebration(ctx,vw,vh,dt,listY){
     var k=Math.min(1,(T-1.0)/1.6), e=1-Math.pow(1-k,3), shown=Math.round(totalCr*e);
     var lx=vw*0.16, ly=vh*0.42;
     ctx.save(); ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.font="9px 'Press Start 2P',monospace"; ctx.fillStyle='#8fa8b8'; ctx.fillText('CREDITS',lx,ly-26);
+    ctx.font="12px 'Press Start 2P',monospace"; ctx.fillStyle='#8fa8b8'; ctx.fillText('CREDITS',lx,ly-26);
     var pop=k>=1?1+0.12*Math.max(0,1-(T-2.6)*3):1;
-    ctx.font=Math.round(22*pop)+"px 'Germania One','Press Start 2P',serif"; ctx.fillStyle='#ffd23a';
+    ctx.font=Math.round(29*pop)+"px 'Germania One','Press Start 2P',serif"; ctx.fillStyle='#ffd23a';
     ctx.shadowColor='#ffb000'; ctx.shadowBlur=10+8*(pop-1)*8;
     ctx.fillText('+'+shown.toLocaleString(),lx,ly); ctx.shadowBlur=0;
     if(k>=1&&_once('coins'))_fxBurst(lx,ly,46,['#ffd23a','#ffe98a','#e0a800'],'coin');
@@ -4711,8 +4712,8 @@ function drawTourCelebration(ctx,vw,vh,dt,listY){
       if(_once('lg'+i2)){ _fxBurst(vw/2,vh*0.40,90,['#ffd23a','#fff3b0','#ffb000'],'coin'); _fxBurst(vw/2,vh*0.40,60,['#ff9ad0','#7fd0ff','#39ff14'],'confetti'); } }
     else if(E.kind==='rumour'){ var nch=Math.floor(Math.min(1,(T-at)/1.4)*E.text.length); txt=E.text.slice(0,nch)+(nch<E.text.length&&((T*8)|0)%2?'_':''); col='#7fd0ff'; }
     else if(E.kind==='streakLost'){ txt='STREAK OF '+E.streak+' LOST'; col='#ff7a6a'; }
-    ctx.globalAlpha=a; ctx.fillStyle=col; ctx.font="10px 'Germania One','Press Start 2P',serif";
-    ctx.fillText(txt,vw/2+slide,y); y+=22; textEv++;
+    ctx.globalAlpha=a; ctx.fillStyle=col; ctx.font="13px 'Germania One','Press Start 2P',serif";
+    ctx.fillText(txt,vw/2+slide,y); y+=29; textEv++;
   }
   ctx.restore();
   /* passport stamp slam, right */
@@ -4755,33 +4756,33 @@ function drawVictory(ctx,vw,vh,dt){
   ctx.textAlign='center';ctx.textBaseline='middle';
 
   var cy=vh*0.40;
-  ctx.font="20px 'Germania One','Press Start 2P',serif";
+  ctx.font="26px 'Germania One','Press Start 2P',serif";
   ctx.fillStyle=r.won?'#39ff14':'#ff7a6a';
   ctx.globalAlpha=k;
   ctx.fillText(r.won?'1ST PLACE':'RACE OVER',vw/2,cy);
 
   if(Flow.t>0.7&&st){
-    ctx.font="11px 'Germania One','Press Start 2P',serif";
+    ctx.font="14px 'Germania One','Press Start 2P',serif";
     ctx.fillStyle='#bfe8ff';
     ctx.globalAlpha=Math.min(1,(Flow.t-0.7)/0.5);
-    ctx.fillText(W.displayName(st)+'  \u00b7  '+fmt(r.total),vw/2,cy+38);
+    ctx.fillText(W.displayName(st)+'  \u00b7  '+fmt(r.total),vw/2,cy+42);
   }
   if(Flow.t>1.3&&!r.won&&r.consolation){
-    ctx.font="10px 'Germania One','Press Start 2P',serif";
+    ctx.font="13px 'Germania One','Press Start 2P',serif";
     ctx.fillStyle='#9fd8b0';
     ctx.globalAlpha=Math.min(1,(Flow.t-1.3)/0.5);
-    ctx.fillText('+'+r.consolation+' CR  \u00b7  BETTER LUCK NEXT TIME',vw/2,cy+66);
+    ctx.fillText('+'+r.consolation+' CR  \u00b7  BETTER LUCK NEXT TIME',vw/2,cy+72);
     ctx.globalAlpha=1;
   }
   if(Flow.t>1.3&&r.won&&r.newly&&r.newly.length){
-    ctx.font="10px 'Germania One','Press Start 2P',serif";
+    ctx.font="13px 'Germania One','Press Start 2P',serif";
     ctx.fillStyle='#ffd23a';
     ctx.globalAlpha=Math.min(1,(Flow.t-1.3)/0.5);
-    ctx.fillText(r.newly.length+' NEW ROUTE'+(r.newly.length>1?'S':'')+' UNLOCKED',vw/2,cy+66);
+    ctx.fillText(r.newly.length+' NEW ROUTE'+(r.newly.length>1?'S':'')+' UNLOCKED',vw/2,cy+72);
   }
   /* Rewards fade in after the unlock line, one per row. */
   if(Flow.t>1.8&&r.rewards&&r.rewards.length){
-    ctx.font="10px 'Germania One','Press Start 2P',serif";
+    ctx.font="13px 'Germania One','Press Start 2P',serif";
     for(var i=0;i<r.rewards.length;i++){
       var rt=1.8+i*0.45;
       if(Flow.t<rt)break;
@@ -4789,12 +4790,12 @@ function drawVictory(ctx,vw,vh,dt){
       ctx.globalAlpha=Math.min(1,(Flow.t-rt)/0.4);
       ctx.fillStyle=(rw.kind==='title'||rw.kind==='emblem')?'#ffd23a'
                    :(rw.kind==='find'?'#7fd0ff':'#9fd8b0');
-      ctx.fillText(rw.text,vw/2,cy+96+i*22);
+      ctx.fillText(rw.text,vw/2,cy+104+i*29);
     }
     ctx.globalAlpha=1;
   }
   /* TOUR CELEBRATION below the classic reward rows. */
-  try{ drawTourCelebration(ctx,vw,vh,dt,cy+96+((r.rewards&&r.rewards.length)||0)*22+20); }catch(e){}
+  try{ drawTourCelebration(ctx,vw,vh,dt,cy+104+((r.rewards&&r.rewards.length)||0)*29+22); }catch(e){}
   if(Flow.t>2.2){
     /* (item 28) Labels come from padGlyph, which reports the connected pad's
        own lettering — the game was naming PlayStation buttons on an Xbox pad.
@@ -4805,7 +4806,7 @@ function drawVictory(ctx,vw,vh,dt){
                   ({confirm:'A',cancel:'B',alt:'X'})[a]; }
       catch(e){ return ({confirm:'A',cancel:'B',alt:'X'})[a]; }
     };
-    ctx.font="9px 'Press Start 2P',monospace";
+    ctx.font="12px 'Press Start 2P',monospace";
     ctx.fillStyle='#4a6a80';
     ctx.globalAlpha=1;
     /* (item 29) Three actions, not one. */
@@ -5164,7 +5165,7 @@ function drawUnlockReveal(ctx,vw,vh){
       }
       if(bt<1.5){
         ctx.globalAlpha=Math.min(1,bt*4)*(1-Math.max(0,(bt-1.0)/0.5));
-        ctx.font="9px 'Press Start 2P',monospace";ctx.textAlign='center';ctx.textBaseline='bottom';
+        ctx.font="12px 'Press Start 2P',monospace";ctx.textAlign='center';ctx.textBaseline='bottom';
         ctx.fillStyle='#ffffff';ctx.fillText('NEW TRACK UNLOCKED',to[0],to[1]-18-k*6);
       }
     }

@@ -4426,15 +4426,20 @@ function strokeRun(ctx, pts, bright, d, hue){
      hue/saturation pair. _pal is resolved once when the tunnel is shown. */
   var pc = (_pal || PALETTES.flat)(hue, bright, _PS);
   ctx.strokeStyle = hslCss(pc[0], pc[1], alpha);
-  ctx.lineWidth = (0.6 + near * 3.4);
+  ctx.lineWidth = (0.6 + near * 3.4) * (_int > 1 ? 1.7 : 1);
   ctx.beginPath();
   ctx.moveTo(pts[0][0], pts[0][1]);
   for(var i=1;i<pts.length;i++) ctx.lineTo(pts[i][0], pts[i][1]);
   ctx.stroke();
 }
 
+var _int = 1, _forceP = null, _forceC = null, _spdMul = 1, _forceKey = '';
 function show(seed){
   if(!ensure()) return;
+  /* A forced pattern / palette (Super Racing Track Lab) re-resolves the
+     tunnel's look when the choice changes, not only when the seed does. */
+  var fk = (_forceP||'') + '|' + (_forceC||'');
+  if(fk !== _forceKey){ _forceKey = fk; _seed = null; }
   if(seed != null && seed !== _seed){
     _seed = seed;
     /* ═══ THE INDEX WAS THE SEED'S LAST DECIMAL DIGIT 
@@ -4484,6 +4489,8 @@ function show(seed){
       }
     }
   }
+  if(_forceP && PATTERNS[_forceP]){ _name = _forceP; _compName = null; }
+  if(_forceC && PALETTES[_forceC]){ _palName = _forceC; _pal = PALETTES[_forceC]; }
   if(!_name){ _name = PATTERN_NAMES[0]; _hue = 0.55; }
   if(!_pal){ _pal = PALETTES.flat; _palName = 'flat'; }
   if(!_fInit) fieldInit(seed || 1);
@@ -4500,7 +4507,7 @@ function frame(dt, speed){
   /* Ease toward the target so the bore bends smoothly with the road. */
   _curve += (_curveTgt - _curve) * Math.min(1, dt * 4);
   _carX  += (_carTgt  - _carX ) * Math.min(1, dt * 6);
-  _t += dt * (0.35 + (speed || 0) * 1.5);
+  _t += dt * (0.35 + (speed || 0) * 1.5) * (_int > 1 ? 1.45 : 1) * _spdMul;
   /* Advance the flow once per frame, capped so a long frame cannot make the
      surface lurch. */
   fieldStep(Math.min(0.05, dt), _t, speed || 0);
@@ -4546,11 +4553,26 @@ function frame(dt, speed){
     var segs = Math.max(40, Math.round((d < 0.7 ? 110 : 64) * (0.55 + 0.45 * _tq)));     // more detail on the near, larger rings
     drawRing(ctx, vw, vh, fn, d, vCoord, _hue, segs);
   }
+  /* INTENSE TUNNELS (request 4 item 8): the finished frame is added onto
+     itself — exactly double the light, still inside the road clip — with
+     thicker strokes (strokeRun) and a faster flow (above). */
+  if(_int > 1){
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = Math.min(1, _int - 1);
+    ctx.drawImage(_cv, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+  }
   ctx.restore();
 }
 
 global.TunnelFX = {
   show: show, hide: hide, frame: frame,
+  /* 1 = normal, 2 = twice as intense (see the end of frame()). */
+  setIntensity: function(k){ _int = Math.max(1, Math.min(2, +k || 1)); },
+  /* Forced pattern / palette names (null = automatic) and a flow-speed factor. */
+  setForce: function(p, c, spd){ _forceP = p && p !== 'auto' ? p : null; _forceC = c && c !== 'auto' ? c : null;
+    _spdMul = Math.max(0.1, Math.min(5, +spd || 1)); },
   setCurve: function(curve, carX){ _curveTgt=curve||0; _carTgt=carX||0; },
   /* Fade the wall in and out at the tunnel's ends (0..1), so the pattern
      grows with the bore instead of popping on and off. */
