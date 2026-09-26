@@ -27,7 +27,81 @@ const MAGNET = {
   grindLean:   0.45
 };
 try{ window.MAGNET = MAGNET; }catch(e){}
-/* ═══ BUMP MECHANIC — LB/RB shoulder check ═══ */
+/* ═══ BUMP MECHANIC — RB lock-on, release to strike ═══ */
+/* Hit-stop and slow motion after a landed strike: the physics clock runs at
+   5% for 110 ms (the frozen moment of contact), then eases from 22% back to
+   full speed over 650 ms. Read by the fixed-step loop. */
+function _bumpTimeScale(){
+  const s=dm&&dm._slowMo; if(!s)return 1;
+  const e=performance.now()-s.t;
+  if(e<110)return 0.05;
+  if(e<760){ const k=(e-110)/650; return 0.22+0.78*k*k; }
+  dm._slowMo=null; return 1;
+}
+function _bumpStrikeStart(tgt,side,gap,now){
+  const g=Math.max(0,gap||0);
+  P._strike={tgt:tgt,side:side,t0:now,range:g/SEG_LEN,pre:P.speed,
+             dur:260+380*Math.min(1,g/(SEG_LEN*80))};
+  _bumpCooldown=now+600;
+  dm._strikeFx={k:0,side:side,t0:now};
+  try{ fxTrigger('boostBurst',0.8); }catch(e){}
+  try{ sfxBeep(220,0.10,0.22); }catch(e){}
+  if(g>SEG_LEN*2)showMsg('⚡ STRIKE! '+Math.round(g/SEG_LEN)+' SEG LUNGE');
+}
+function _bumpImpact(T,st,now){
+  const pDir=st.side;
+  const preSpd=T.speed||0, prePlace=(typeof hud!=='undefined'&&hud.pos)||0;
+  const rivalShieldPct=18, youShieldPct=5, stunMs=2800, rivalSpeedCut=0.86;
+  T._railBounce=(T._railBounce||0)+pDir*20;
+  T.speed=preSpd*(1-rivalSpeedCut);
+  T.x+=pDir*0.9;
+  T.lean=(T.lean||0)+pDir*2.2;
+  if(T.power!==undefined)T.power=Math.max(0,T.power-(T.powerCap||100)*rivalShieldPct/100);
+  T._stunUntil=now+stunMs;
+  T._bumpGhostUntil=now+1000;        // the collider lets the player through
+  T._spinT0=now; T._spinDir=pDir;
+  dm._lurchFx={t:now,dur:160,dir:pDir,startX:P.x,endX:P.x-pDir*0.25};
+  P._railBounce=(P._railBounce||0)-pDir*1.6;
+  P.lean=(P.lean||0)+pDir*1.4;
+  // Slingshot: the impact transfers momentum into the player.
+  /* Measured against the speed BEFORE the lunge: the lunge itself is a
+     brief homing burst, not part of the reward. */
+  const pre=Math.max(1,st.pre||P.speed), surgeTop=Math.max(MAX_SPEED*1.38,pre*1.24);
+  P.speed=Math.min(surgeTop,Math.max(pre*1.22,pre+MAX_SPEED*0.18));
+  const surgePct=Math.round((P.speed/pre-1)*100);
+  P._catapultUntil=now+2100;           // 1.4 s of surge + the slow-motion span
+  P._catapultTop=surgeTop;
+  P.power=Math.max(0,P.power-(P.powerCap||100)*youShieldPct/100);
+  if(pDir<0)_bumpGlowL=1;else _bumpGlowR=1;
+  _bumpCooldown=now+900;
+  dm._slowMo={t:now};
+  dm._bumpZoom={t:now,dir:pDir};
+  dm._bumpFx={t:now,dir:pDir,dur:900};
+  dm._impactFlash={t:now,dur:650};
+  P._railJitter=1;
+  dm._bumpCard={t:now,name:T.name||'RIVAL',col:T.col||'#ff6644',
+    rivalSpeed:-Math.round(rivalSpeedCut*100), stun:stunMs/1000, rivalShield:-rivalShieldPct,
+    surge:surgePct, youShield:-youShieldPct, range:Math.round(st.range||0),
+    placeBefore:prePlace, placeAfter:0};
+  dm._bumpCount=(dm._bumpCount|0)+1;
+  try{ fxTrigger('boostBurst',1.0); fxTrigger('hitFlash',1.0); }catch(e){}
+  try{
+    const ac=new (window.AudioContext||window.webkitAudioContext)(), t=ac.currentTime;
+    const o=ac.createOscillator(), g=ac.createGain(); o.connect(g); g.connect(ac.destination);
+    o.type='sine'; o.frequency.setValueAtTime(90,t); o.frequency.exponentialRampToValueAtTime(38,t+0.5);
+    g.gain.setValueAtTime(0.5,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.6);
+    o.start(t); o.stop(t+0.6);
+    const n=ac.createBufferSource(), b=ac.createBuffer(1,ac.sampleRate*0.25,ac.sampleRate), d=b.getChannelData(0);
+    for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,3);
+    const ng=ac.createGain(); ng.gain.value=0.35; n.buffer=b; n.connect(ng); ng.connect(ac.destination); n.start(t);
+    setTimeout(function(){ try{ac.close();}catch(e){} },1200);
+  }catch(e){}
+  try{ const gps=navigator.getGamepads?navigator.getGamepads():[];
+    for(let i=0;i<gps.length;i++){ const gp=gps[i];
+      if(gp&&gp.vibrationActuator)gp.vibrationActuator.playEffect('dual-rumble',{duration:450,strongMagnitude:0.8,weakMagnitude:0.6}); } }catch(e){}
+  const msgs=['DEVASTATION!!','OBLITERATED!!','WRECKING BALL!!','TOTAL CARNAGE!!','BODY SLAM!!','SENT FLYING!!'];
+  showMsg('⚡⚡ '+msgs[~~(Math.random()*msgs.length)]+' ⚡⚡');
+}
 var _bumpCooldown=0;  // timestamp: next bump allowed
 var _bumpGlowL=0;     // left edge glow strength (0..1)
 var _bumpGlowR=0;     // right edge glow strength (0..1)
@@ -43,7 +117,28 @@ let _camMode=0;          // 0=chase/overhead axis (see _camDist), 5=first-person
   /* Continuous camera distance, 0 = closest, 1 = furthest. _CAM_DIST_HOME is chosen so the resting camera reproduces the old default view exactly. */
 const _CAM_DIST_HOME=0.30;
 let _camDist=_CAM_DIST_HOME;   // overwritten from storage on first race
-let _camKeyDebounce=false;   // keyboard (V) camera-cycle edge detection
+let _camKeyDebounce=false;   // keyboard (V) / pad (Y) camera-cycle edge detection
+let _camKeyDebounceN=false;  // keyboard (N) orbit-camera cycle
+/* ═══ DRIVING VIEWS ON Y (request 3 item 2). The four views match debug
+   viewpoints 1/36 (CHASE), 4/36 (CLOSE CHASE) and 5/36 (CINEMATIC) exactly —
+   same _camDist values as DriveMode.setCamera — plus a true FIRST PERSON eye
+   placed at the machine itself. */
+const _VIEWS=[
+  {name:'CHASE VIEW',       mode:0, dist:0.30},
+  {name:'CLOSE CHASE',      mode:0, dist:0.0},
+  {name:'CINEMATIC',        mode:0, dist:0.55},
+  {name:'FIRST PERSON',     mode:5, dist:0.30}
+];
+let _viewIdx=0;
+function _cycleView(dir){
+  _viewIdx=(_viewIdx+(dir||1)+_VIEWS.length)%_VIEWS.length;
+  const v=_VIEWS[_viewIdx];
+  _camMode=v.mode; _camDist=v.dist;
+  dm._orbitPitch=0; dm._orbitRoll=0; dm._orbitZ=0; dm._orbitX=0; dm._vpPose=null;
+  try{ _camCutReset(); }catch(e){}
+  dm._viewBadge={name:v.name,idx:_viewIdx,t:performance.now()};
+  try{ showMsg('\ud83c\udfa5 '+v.name); }catch(e){}
+}
 let _camFovExtra=1.0;     // set each frame by camera mode
 let _inTunnelNow=false;   // set each frame by renderWorld, read by frame()
 let _cinematicSaved=false; // tracks whether cinematic ctx.save was called
@@ -5392,6 +5487,13 @@ function _buildTrackImpl(seed){
         _FEAT_META[fk]=[+dm._algoOverride[ok],_FEAT_META[fk][1]];
       }
     }
+    /* Any other _feat_<kind> naming a kind the director knows is honoured
+       too, so a new menu slider can never silently do nothing. */
+    for(const ok in dm._algoOverride){
+      if(ok.indexOf('_feat_')!==0||_fcMap[ok])continue;
+      const fk=ok.slice(6), v=+dm._algoOverride[ok];
+      if(_FEAT_META[fk]&&isFinite(v))_FEAT_META[fk]=[v,_FEAT_META[fk][1]];
+    }
   }
   // ── (11) FEED FEATURE WEIGHTS INTO THE LEARNING SYSTEM
   // how often each track feature is emitted — were never recorded on a
@@ -7840,6 +7942,135 @@ function _buildTrackImpl(seed){
       }
     }
   }
+  /* ═══ ENGINE-AWARE GENERATION v2 (request 3 item 5)
+     The engine can bank the horizon, change the road's material and float
+     the road over open sky. The first pass sprinkled those by odds; this
+     one puts them where they MEAN something:
+       a. structures carry their own material — bridges, flyovers and decks
+          are steel grating;
+       b. black ice on cold tracks just past tunnel exits and at the foot of
+          long descents, where the player arrives fastest;
+       c. dust drifts on dry tracks at the entry of the tightest corners;
+       d. surface runs start in braking zones (10-20 segments before a
+          corner) instead of at arbitrary points, so grip is a decision;
+       e. fast sweepers entered from a straight are banked like a speedway,
+          by an amount that follows the curve;
+       f. OFF-CAMBER crests on wild tracks: the bank leans away from the
+          bend and the car is thrown outward (physics in updatePlayer);
+       g. SKY BRIDGE: the highest calm stretch of a mountainous track leaves
+          the ground and runs as a glass ribbon over open sky.
+     All seed-hashed, so a seed always builds the same track. */
+  {
+    const H=(x)=>{ let h=Math.imul(((seed>>>0)^0x5eed1e55)+x,0x27d4eb2d)>>>0; h^=h>>>15; h=Math.imul(h,0x165667b1)>>>0; h^=h>>>13; return (h>>>0)/4294967296; };
+    const N=segments.length, bio=(theme&&theme.biome)||'plains';
+    const cold=/arctic|glacier|tundra|alpine/.test(bio)||!!(theme&&theme.snow);
+    const dry=/desert|mesa|canyon|savanna|lunar/.test(bio);
+    const sOdds=Math.max(0,Math.min(1,_AO('_surfaceOdds',0.45)));
+    const _fsf=dm._algoOverride&&dm._algoOverride._forceSurface;
+    const forced=(typeof _fsf==='string'&&SURFACES[_fsf])?_fsf:null;
+    const free=(g)=>g&&!g.surf&&!g.tunnel&&!g.tube&&!g.loop&&!g.gap&&!g.pit&&!g.rainbowRoad&&!g.boost&&!g.wallride&&!g.pipe&&!g.halfpipe&&g._sp==null;
+    const clear=(g)=>g&&!g.tunnel&&!g.tube&&!g.loop&&!g.gap&&!g.pit&&!g.wallride&&!g.pipe&&!g.halfpipe&&!g.ramp&&!g.bridge&&!g.flyover&&!g.multideck&&!g.voidDeck&&!g.bank&&g._sp==null;
+    const lay=(a,b,mat)=>{ let n=0; for(let k=Math.max(1,a);k<Math.min(N-10,b);k++)if(free(segments[k])){ segments[k].surf=forced||mat; n++; } return n; };
+    const cornerAhead=(i,maxAhead)=>{ for(let k=i;k<Math.min(N-1,i+maxAhead);k++)if(Math.abs(segments[k].curve||0)>=2.4)return k; return -1; };
+    const gy=(g)=>(g&&g.p1&&g.p1.world)?g.p1.world.y:0;
+    const G2=dm._gen2={metal:0,ice:0,dust:0,moved:0,speedway:0,offCamber:0,skyBridge:0,cand:0};
+    if(N>600){
+      // a. structures
+      if(sOdds>0&&H(1)<0.35+sOdds*0.6)
+        for(let i=0;i<N;i++){ const g=segments[i]; if((g.bridge||g.flyover||g.multideck)&&free(g)){ g.surf=forced||'metal'; G2.metal++; } }
+      // b. black ice
+      if(cold&&sOdds>0){
+        let n=0;
+        for(let i=1;i<N-40&&n<3;i++){
+          if(segments[i-1].tunnel&&!segments[i].tunnel&&H(100+i)<0.75){ lay(i+3,i+3+22+~~(H(150+i)*16),'ice'); n++; G2.ice++; i+=60; }
+        }
+        let run=0;
+        for(let i=1;i<N-30&&n<6;i++){
+          const dy=gy(segments[i+1])-gy(segments[i]);
+          if(dy<-SEG_LEN*0.04)run++;
+          else { if(run>=50&&H(200+i)<0.55){ lay(i-4,i+24,'ice'); n++; G2.ice++; } run=0; }
+        }
+      }
+      // c. dust drifts
+      if(dry&&sOdds>0){
+        let n=0;
+        for(let i=20;i<N-40&&n<5;i++){
+          const g=segments[i];
+          if(Math.abs(g.curve||0)>=4.2&&Math.abs(segments[i-1].curve||0)<4.2&&H(300+i)<0.5){ lay(i-8,i+10,'sand'); n++; G2.dust++; i+=80; }
+        }
+      }
+      // d. braking-zone surfaces: slide each biome-surface run so it starts
+      //    just before a corner (the first pass placed them anywhere)
+      {
+        let i=1;
+        while(i<N-40){
+          const g=segments[i];
+          if(g.surf&&!segments[i-1].surf&&!g.voidDeck&&!g.iceRink&&!g.dirtRally&&!g.bridge&&!g.flyover&&!g.multideck){
+            let j=i; while(j<N&&segments[j].surf===g.surf)j++;
+            const len=j-i, c=cornerAhead(i,160);
+            if(c>i+20&&len>=30){
+              const mat=g.surf, start=c-10-~~(H(400+i)*10);
+              for(let k=i;k<j;k++)segments[k].surf=null;
+              lay(start,start+len,mat); G2.moved++;
+              i=start+len+1; continue;
+            }
+            i=j;
+          } else i++;
+        }
+      }
+      // e. speedway sweepers
+      if(_bankAmt>0){
+        const odds=Math.max(0,Math.min(1,_AO('_bankOdds',0.30)));
+        let i=40, n=0;
+        while(i<N-60&&n<4){
+          const c=segments[i].curve||0;
+          if(Math.abs(c)>=1.4&&clear(segments[i])){
+            let straight=0; for(let k=i-1;k>=Math.max(0,i-60)&&Math.abs(segments[k].curve||0)<1.0;k--)straight++;
+            let j=i; const sg=Math.sign(c);
+            while(j<N&&Math.sign(segments[j].curve||0)===sg&&Math.abs(segments[j].curve||0)>=0.8&&clear(segments[j]))j++;
+            if(straight>=20&&j-i>=36)G2.cand++;
+            if(straight>=20&&j-i>=36&&H(500+i)<odds*1.4){
+              const amt=_bankAmt*Math.min(1.1,0.45+Math.abs(c)*0.22);
+              _bankSpan(i,j,sg,amt); n++; G2.speedway++;
+            }
+            i=j+1;
+          } else i++;
+        }
+      }
+      // f. off-camber crests
+      if(H(6)<Math.max(0,Math.min(1,_AO('_absurdOdds',0.35)))*0.8){
+        let i=60, n=0;
+        while(i<N-60&&n<2){
+          const g=segments[i], c=g.curve||0;
+          const crest=gy(segments[i])>gy(segments[i-20])+SEG_LEN*0.4&&gy(segments[i])>gy(segments[i+20])+SEG_LEN*0.4;
+          if(Math.abs(c)>=2.0&&Math.abs(c)<4.5&&crest&&clear(g)&&H(600+i)<0.5){
+            let j=i; const sg=Math.sign(c);
+            while(j<N&&j<i+50&&Math.sign(segments[j].curve||0)===sg&&clear(segments[j]))j++;
+            if(j-i>=20){ _bankSpan(i,j,-sg,0.55); for(let k=i;k<j;k++)segments[k].offCamber=true; n++; G2.offCamber++; }
+            i=j+120;
+          } else i++;
+        }
+      }
+      // g. sky bridge
+      if(H(3)<Math.max(0,Math.min(1,_AO('_skyHighwayOdds',0.18)))*1.5&&!segments.some(g=>g.voidDeck)){
+        let lo=Infinity,hi=-Infinity; for(let i=0;i<N;i+=8){ const y=gy(segments[i]); if(y<lo)lo=y; if(y>hi)hi=y; }
+        if(hi-lo>SEG_LEN*40){
+          const W=60+~~(H(7)*40);
+          let best=-1,bestY=-Infinity;
+          for(let i=80;i<N-W-80;i+=6){
+            let ok=true, sy=0;
+            for(let k=i;k<i+W;k+=3){ const g=segments[k]; if(!clear(g)||Math.abs(g.curve||0)>2.2||g.surf){ok=false;break;} sy+=gy(g); }
+            if(ok&&sy>bestY){ bestY=sy; best=i; }
+          }
+          if(best>0&&bestY/(W/3)>lo+(hi-lo)*0.72){
+            const mat=H(8)<0.6?'glass':'metal';
+            for(let k=best;k<best+W;k++){ const g=segments[k]; g.voidDeck=true; g.surf=g.surf||mat; g.skyBridge=true; g.rush=Math.max(g.rush||1,1.10); }
+            G2.skyBridge=1;
+          }
+        }
+      }
+    }
+  }
   // ═══ (2) FEATURE MANIFEST — DERIVED FROM THE FINISHED TRACK
   // Counting the finished segment array instead means the manifest cannot
   {
@@ -7863,6 +8094,7 @@ function _buildTrackImpl(seed){
     tally('boost',     g=>g.boost);
     tally('banked',    g=>g.bank&&Math.abs(g.bank)>0.2);
     tally('skyhighway',g=>g.voidDeck);
+    tally('offcamber', g=>g.offCamber);
     for(const _sm of Object.keys(SURFACES))tally('surf_'+_sm,g=>g.surf===_sm);
     if(segments._extremeElev)F.extremeElev=1;
     if(segments._absurd)F['absurd_'+String(segments._absurd).toLowerCase()]=1;
@@ -8385,6 +8617,7 @@ function resetOrbitState(){
   dm._bumpCamZoom=1; dm._bumpCamX=0;
   dm._bumpLockZoom=null; dm._chargeBump=null;
   dm._lurchFx=null; dm._bumpFx=null; dm._impactFlash=null;
+  dm._slowMo=null; dm._bumpCard=null; dm._strikeFx=null; dm._bumpInRange=0; if(P){P._strike=null;P._strikeTop=0;}
   try{ _bumpCooldown=0; _bumpGlowL=0; _bumpGlowR=0; }catch(e){}
 }
 /* ═══ A REAL STARTING GRID: two staggered columns (the left one slightly
@@ -8436,7 +8669,7 @@ function resetRace(){
   /* Every race starts in the stock CHASE camera (debug view 1/36): home
      distance, no stored right-stick distance, no leftover debug view. The
      right stick still adjusts the distance during the race. */
-  _camMode=0;_camDist=_CAM_DIST_HOME;inp_rx=0;inp_ry=0;dm._dbgView=null;
+  {const _v=_VIEWS[_viewIdx]||_VIEWS[0]; _camMode=_v.mode; _camDist=_v.dist;} inp_rx=0;inp_ry=0;dm._dbgView=null;dm._orbitZ=0;
   /* Clear interpolation snapshots: blending from a previous race's position
      into this one would sweep the camera across the whole track on frame 1. */
   try{ dm._alpha=0; if(P){P._z0=undefined;P._x0=undefined;P._rz=undefined;P._rx=undefined;
@@ -8693,10 +8926,10 @@ function pollInput(){
   var _srEl=document.getElementById('_sr_menu');
   if(_srEl&&_srEl.offsetParent!==null)
     return {steer:0,acc:false,acc2:false,brk:false,turbo:false,b:false,
-      startBtn:false,up:false,down:false,a:false,lb:false,rb:false,xb:false,
+      startBtn:false,up:false,down:false,a:false,lb:false,rb:false,xb:false,leanL:false,leanR:false,
       aEdge:false,bEdge:false,xEdge:false,upEdge:false,downEdge:false,lbEdge:false,rbEdge:false};
   const pads=navigator.getGamepads?navigator.getGamepads():[];
-  let steer=0,acc2=false,brk=false,turbo=false,b=false,startBtn=false,up=false,down=false,a=false,lb=false,rb=false,xb=false;
+  let steer=0,acc2=false,brk=false,turbo=false,b=false,startBtn=false,up=false,down=false,a=false,lb=false,rb=false,xb=false,leanL=false,leanR=false,yb=false;
   inp_rx=0;inp_ry=0;   // reset each frame; set below if stick active
   for(const pd of pads){
     if(!pd)continue;
@@ -8717,14 +8950,20 @@ function pollInput(){
     if(pd.buttons[15]?.pressed)steer=1;
     if(pd.buttons[12]?.pressed)up=true;
     if(pd.buttons[13]?.pressed)down=true;
+    /* ═══ CONTROLLER MAP (request 3 item 2)
+         A accelerate · X brake · B turbo boost
+         LT lean left · RT lean right (analogue pulls count past a small deadzone)
+         RB lock-on trigger (hold to lock, release to strike) · LB next target
+         Y  cycle view: CHASE → CLOSE CHASE → CINEMATIC → FIRST PERSON
+       B still reports as "back" too, so menus and the pause screen keep it. */
     if(pd.buttons[0]?.pressed){acc2=true;a=true;}
     if(pd.buttons[2]?.pressed){brk=true;xb=true;}
-    if((pd.buttons[6]?.value||0)>0.12||pd.buttons[6]?.pressed)brk=true;   // LT (soft pull ok)
+    if(pd.buttons[1]?.pressed){turbo=true;b=true;}
+    if((pd.buttons[6]?.value||0)>0.15||pd.buttons[6]?.pressed)leanL=true;   // LT
+    if((pd.buttons[7]?.value||0)>0.15||pd.buttons[7]?.pressed)leanR=true;   // RT
     if(pd.buttons[4]?.pressed)lb=true;
     if(pd.buttons[5]?.pressed)rb=true;
-    if(pd.buttons[3]?.pressed)turbo=true;
-    if((pd.buttons[7]?.value||0)>0.25||pd.buttons[7]?.pressed)turbo=true;   // RT
-    if(pd.buttons[1]?.pressed)b=true;
+    if(pd.buttons[3]?.pressed)yb=true;
     if(pd.buttons[9]?.pressed)startBtn=true;
     if(pd.buttons[8]?.pressed)b=true;
   }
@@ -8735,18 +8974,18 @@ function pollInput(){
   if(keys.ShiftLeft||keys.KeyQ)turbo=true;
   if(keys.Escape||keys.KeyB)b=true;
   if(keys.KeyP||keys.Enter)startBtn=true;
-  if(keys.KeyZ)lb=true;if(keys.KeyC)rb=true;
-  if(keys.KeyV){
-    if(!_camKeyDebounce){
-      _camKeyDebounce=true;
-      /* ═══ DRIVING VIEWPOINTS (engine plan E11): chase, first person, then
-         three cinematic cameras driven by the orbit axes. */
-      const _CYC=[0,5,6,7,8];
-      _camMode=_CYC[(_CYC.indexOf(_camMode)+1)%_CYC.length];
-      if(_camMode<6){ dm._orbitPitch=0; dm._orbitRoll=0; dm._orbitZ=0; dm._orbitX=0; dm._vpPose=null; }
-      showMsg({0:'CHASE CAM',5:'FIRST PERSON',6:'HELI CAM',7:'DRONE CAM',8:'CINEMA CAM'}[_camMode]||'CHASE CAM');
-    }
+  /* Keyboard mirrors the pad: Z/C lean, E = RB lock-on, R = LB next target. */
+  if(keys.KeyZ)leanL=true; if(keys.KeyC)leanR=true;
+  if(keys.KeyE)rb=true; if(keys.KeyR)lb=true;
+  if(keys.KeyV||yb){
+    if(!_camKeyDebounce){ _camKeyDebounce=true; _cycleView(1); }
   } else _camKeyDebounce=false;
+  /* N keeps the three orbit-driven cameras reachable from the keyboard. */
+  if(keys.KeyN){
+    if(!_camKeyDebounceN){ _camKeyDebounceN=true;
+      const _X=[6,7,8]; _camMode=_X[(_X.indexOf(_camMode)+1)%_X.length];
+      showMsg({6:'HELI CAM',7:'DRONE CAM',8:'CINEMA CAM'}[_camMode]); }
+  } else _camKeyDebounceN=false;
   /* Keyboard equivalent of the stick, so the range is reachable without a pad. */
   if(keys.BracketLeft) inp_ry=1;
   if(keys.BracketRight)inp_ry=-1;
@@ -8758,7 +8997,7 @@ function pollInput(){
   else _camLockKeyHeld=false;
   _camDistTick(inp_ry);
   const edge=k=>{const v={steer,acc2,brk,turbo,b,startBtn,up,down,a,xb}[k];const e=v&&!inpPrev[k];return e;};
-  const out={steer,acc:acc2,brk,turbo,b,startBtn,up,down,a,lb,rb,
+  const out={steer,acc:acc2,brk,turbo,b,startBtn,up,down,a,lb,rb,leanL,leanR,
     bEdge:edge('b'),startEdge:edge('startBtn'),upEdge:edge('up'),downEdge:edge('down'),aEdge:edge('a'),xEdge:edge('xb'),
     lbEdge:edge('lb'),rbEdge:edge('rb')};
   inpPrev={steer,acc2,brk,turbo,b,startBtn,up,down,a,xb};
@@ -9284,9 +9523,10 @@ function updatePlayer(dt,inp){
      over the surge window, so the launch bleeds off smoothly instead of
      being chopped off by this clamp on the very next frame. */
   if(P._catapultUntil&&now<P._catapultUntil){
-    const _cl=(P._catapultUntil-now)/1400;          // 1 -> 0
+    const _cl=Math.min(1,(P._catapultUntil-now)/1400);   // holds at 1, then 1 -> 0
     top=Math.max(top,top+(P._catapultTop-top)*_cl);
   }
+  if(P._strike&&P._strikeTop)top=Math.max(top,P._strikeTop);
   P.speed=clamp(P.speed,0,top);
 // ── (4) NO SPEED CEILING MAY EVER EXIST  deceleration — the player holding the accelerator can never pass it.
   if(s.speedCap!=null||s.brakeZone){
@@ -9392,7 +9632,7 @@ function updatePlayer(dt,inp){
     if(Math.abs(P._railBounce)<0.008)P._railBounce=0;
   }
     /* ═══ LEAN TILTS IN PLACE, IT DOES NOT TRANSLATE (item 62)  This was a straight side-shift: holding LB or RB slid the machine across the road exactly as steering does, only weaker. */
-  const lean=(inp.rb?1:0)-(inp.lb?1:0);
+  const lean=(inp.leanR?1:0)-(inp.leanL?1:0);
   P._leanHold=lerp(P._leanHold||0,lean,Math.min(1,dt*6));
   /* Bank angle for the sprite. Added to whatever the collision and rail
      systems already put in P.lean rather than replacing it, so a lean during a
@@ -9409,170 +9649,135 @@ function updatePlayer(dt,inp){
     if(!P._cb)P._cb={on:false,start:0,charged:false,tIdx:-1,allIdx:[],side:0};
     var cb=P._cb;
 
-    // Point 2: Forward-only scan, generous cone
-    /* Lookahead doubled (10 -> 20 segments) so a target can be locked
-       from further back and the release reads as the player launching
-       forward INTO the rival, rather than only reaching one already alongside. */
-    var _scanZ=SEG_LEN*20, _scanX=2.5;
+    /* ═══ CHARGE BUMP v2 — LOOK FURTHER, STRIKE HOME (request 3 item 1)
+       Why v1 was almost unusable: a 20-segment scan plus a fixed 1.3 s lock
+       meant that at racing speed the player closed on — and passed — the
+       rival before the lock completed. Now:
+        • the scan reaches 80 segments ahead (about 1.1 s at top speed) and
+          3 behind, so a rival just passed is still a target;
+        • the lock takes 0.35 s alongside, rising to 0.75 s at the far edge;
+        • release launches a HOMING STRIKE: the machine lunges forward and
+          across onto the target and the hit lands on contact, so a lock
+          taken at long range still connects. */
+    var _SCAN_AHEAD=SEG_LEN*80, _SCAN_BEHIND=SEG_LEN*3, _scanX=2.5;
     var _found=[];
-    if(rivals&&rivals.length){
+    if(rivals&&rivals.length&&!P._strike){
       for(var _bi=0;_bi<rivals.length;_bi++){
         var _r=rivals[_bi];
         if(_r.finished||_r.exploded)continue;
-        var _dz=_r.z-P.z; if(_dz<0)_dz+=trackLength;
-        if(_dz>trackLength/2||_dz>_scanZ||_dz<SEG_LEN*0.2)continue;
-        var _dx=_r.x-P.x, _adx=Math.abs(_dx);
-        var _xLim=_scanX*(1+(_dz/_scanZ)*2);
-        if(_dz<SEG_LEN*3)_xLim=Math.max(_xLim,3.0);
-        if(_adx>_xLim)continue;
-        _found.push({idx:_bi,dist:_dz+_adx*SEG_LEN*0.3,dx:_dx});
+        var _dz=_r.z-P.z; if(_dz>trackLength/2)_dz-=trackLength; if(_dz<-trackLength/2)_dz+=trackLength;
+        if(_dz>_SCAN_AHEAD||_dz<-_SCAN_BEHIND)continue;
+        var _dx=_r.x-P.x;
+        if(Math.abs(_dx)>_scanX*(1+Math.max(0,_dz)/_SCAN_AHEAD))continue;
+        _found.push({idx:_bi,dist:Math.abs(_dz)+Math.abs(_dx)*SEG_LEN*0.3,dx:_dx,dz:_dz});
       }
       _found.sort(function(a,b){return a.dist-b.dist;});
     }
     var _hasTargets=_found.length>0;
+    var _lockMsFor=function(dz){ return 350+400*Math.min(1,Math.max(0,dz)/_SCAN_AHEAD); };
+    dm._bumpInRange=_hasTargets&&!cb.on&&!P._strike?_found.length:0;
 
-    // Point 1: RB starts targeting
-    if(!cb.on){
+    // RB starts targeting
+    if(!cb.on&&!P._strike){
       if(inp.rb&&_hasTargets){
-        cb.on=true;cb.start=_bNow;cb.charged=false;
+        cb.on=true;cb.start=_bNow;cb.charged=false;cb.prog=0;
         cb.allIdx=_found.map(function(f){return f.idx;});
         cb.tIdx=cb.allIdx[0];
         cb.side=_found[0].dx>=0?1:-1;
+        cb.lockMs=_lockMsFor(_found[0].dz);
       }
     }
 
     if(cb.on){
-      // Point 3: LB cycles to next target
+      // LB cycles to the next target
       if(inp.lbEdge&&cb.allIdx.length>1){
         var _curPos=cb.allIdx.indexOf(cb.tIdx);
         cb.tIdx=cb.allIdx[(_curPos+1)%cb.allIdx.length];
-        cb.start=_bNow;cb.charged=false; // reset charge on target switch
+        cb.charged=false;cb.prog=0;
       }
-      /* ═══ THE LOCK STAYS ON ITS TARGET
-         The list was re-scanned every frame and, if the target slipped out of
-         the scan window, the lock silently jumped to another rival — even
-         after it said LOCKED. Now: once locked, the target is held until
-         release unless it finishes, explodes, drops >4 segments behind or
-         pulls >40 ahead; while still charging, the current target is kept
-         within 1.5x the scan window. */
+      /* The lock stays on its target: once charged it is held until release
+         unless the target finishes, explodes, falls 6 segments behind or
+         pulls 110 ahead. While charging it is held inside the scan window. */
       if(_found.length>0)cb.allIdx=_found.map(function(f){return f.idx;});
+      var _cdz=0;
       {
         var _ct=(cb.tIdx>=0&&rivals&&rivals[cb.tIdx])?rivals[cb.tIdx]:null, _keep=false;
         if(_ct&&!_ct.finished&&!_ct.exploded){
-          var _cdz=_ct.z-P.z; if(_cdz>trackLength/2)_cdz-=trackLength; if(_cdz<-trackLength/2)_cdz+=trackLength;
-          _keep=cb.charged?(_cdz>-SEG_LEN*4&&_cdz<SEG_LEN*40):(_cdz>SEG_LEN*0.2&&_cdz<_scanZ*1.5);
+          _cdz=_ct.z-P.z; if(_cdz>trackLength/2)_cdz-=trackLength; if(_cdz<-trackLength/2)_cdz+=trackLength;
+          _keep=cb.charged?(_cdz>-SEG_LEN*6&&_cdz<SEG_LEN*110):(_cdz>-_SCAN_BEHIND&&_cdz<_SCAN_AHEAD*1.25);
         }
         if(!_keep){
-          if(cb.charged){ cb.on=false; cb.charged=false; cb.tIdx=-1; showToast('\u2716 LOCK LOST',false); }
+          if(cb.charged){ cb.on=false; cb.charged=false; cb.tIdx=-1; showToast('✖ LOCK LOST',false); }
           else if(_found.length>0){ cb.tIdx=_found[0].idx; }
+          else { cb.on=false; }
         }
       }
       if(!cb.on){ dm._chargeBump=null; }
 
-      var _tgt=(cb.tIdx>=0&&rivals&&rivals[cb.tIdx])?rivals[cb.tIdx]:null;
-      var _prog=Math.min(1,(_bNow-cb.start)/1300);   // lock-on time: 1.3 s
+      var _tgt=(cb.on&&cb.tIdx>=0&&rivals&&rivals[cb.tIdx])?rivals[cb.tIdx]:null;
+      if(_tgt&&!cb.charged){
+        cb.lockMs=_lockMsFor(_cdz);
+        cb.prog=Math.min(1,(cb.prog||0)+dt*1000/cb.lockMs);
+      }
+      var _prog=cb.prog||0;
       cb.side=(_tgt&&_tgt.x>=P.x)?1:-1;
 
       if(!inp.rb){
         // ═══ RELEASE ═══
         if(cb.charged&&_tgt&&_bNow>_bumpCooldown){
-          // Point 7: Devastating impact — moderated: strong but readable
-          var _pDir=Math.sign(_tgt.x-P.x)||cb.side;
-          _tgt._railBounce=(_tgt._railBounce||0)+_pDir*20;
-          _tgt.speed*=0.14;
-          _tgt.x+=_pDir*3.0;
-          _tgt.z-=SEG_LEN*3.5; if(_tgt.z<0)_tgt.z+=trackLength;
-          _tgt.lean=(_tgt.lean||0)+_pDir*2.2;
-          if(_tgt.power!==undefined)_tgt.power=Math.max(0,_tgt.power-(_tgt.powerCap||100)*0.18);
-          // Point 8: Stun
-          _tgt._stunUntil=_bNow+2800;
-          // Point 9: Animated lurch — noticeable but readable, not a snap
-          dm._lurchFx={t:_bNow,dur:160,dir:cb.side,startX:P.x,endX:P.x+cb.side*0.85};
-          P._railBounce=(P._railBounce||0)+cb.side*3.2;
-          P.lean=(P.lean||0)+cb.side*2.2;
-          P.bank=(P.bank||0)+cb.side*1.2;
-          /* ═══ CATAPULT — THE BUMP LAUNCHES THE PLAYER FORWARD
-             Previously the player LOST 5% speed on a successful bump, which
-             felt like hitting something rather than using the rival as a
-             springboard. Now the impact transfers momentum: the player
-             surges well past normal top speed for a moment, the ceiling is
-             raised for the surge's duration (the per-frame top-speed clamp
-             would otherwise erase it next frame), and the rival — which can
-             now be locked from twice as far ahead — is thrown back BEHIND
-             the player so the pass happens in the same beat. */
-          {
-            var _surgeTop=MAX_SPEED*1.38;
-            const _pre=P.speed;
-            P.speed=Math.min(_surgeTop,Math.max(P.speed*1.22,P.speed+MAX_SPEED*0.18));
-            try{ showToast('\u26a1 SLINGSHOT! +'+Math.round((P.speed/Math.max(1,_pre)-1)*100)+'% SPEED',true); }catch(e){}   // make the payoff explicit
-            P._catapultUntil=_bNow+1400;
-            P._catapultTop=_surgeTop;
-            var _tz=P.z-SEG_LEN*4; if(_tz<0)_tz+=trackLength;
-            var _gap=_tgt.z-P.z; if(_gap<0)_gap+=trackLength;
-            if(_gap<trackLength/2)_tgt.z=_tz;       // rival ends up behind the player
-            try{ fxTrigger('boostBurst',0.9); }catch(e){}
-          }
-          P.power=Math.max(0,P.power-(P.powerCap||100)*0.05);
-          if(cb.side<0)_bumpGlowL=1;else _bumpGlowR=1;
-          _bumpCooldown=_bNow+600;
-          // Point 10+11: Zoom in then out
-          // CAMERA: wide orbital sweep using the engine's real orbit system
-          dm._bumpZoom={t:_bNow, dir:cb.side};
-          // Thud sound — low frequency pulse for 0.4s
-          try{
-            var _thudCtx=new (window.AudioContext||window.webkitAudioContext)();
-            var _thudOsc=_thudCtx.createOscillator();
-            var _thudG=_thudCtx.createGain();
-            _thudOsc.connect(_thudG);_thudG.connect(_thudCtx.destination);
-            _thudOsc.frequency.value=55;_thudOsc.type='sine';
-            _thudG.gain.setValueAtTime(0.35,_thudCtx.currentTime);
-            _thudG.gain.exponentialRampToValueAtTime(0.001,_thudCtx.currentTime+0.4);
-            _thudOsc.start();_thudOsc.stop(_thudCtx.currentTime+0.4);
-            // Layer a click on top
-            var _thudO2=_thudCtx.createOscillator();
-            var _thudG2=_thudCtx.createGain();
-            _thudO2.connect(_thudG2);_thudG2.connect(_thudCtx.destination);
-            _thudO2.frequency.value=120;_thudO2.type='square';
-            _thudG2.gain.setValueAtTime(0.20,_thudCtx.currentTime);
-            _thudG2.gain.exponentialRampToValueAtTime(0.001,_thudCtx.currentTime+0.08);
-            _thudO2.start();_thudO2.stop(_thudCtx.currentTime+0.08);
-          }catch(e){}
-          // Point 12: Impact flash — extended duration for spectacle
-          dm._bumpFx={t:_bNow,dir:cb.side,dur:700};
-          dm._impactFlash={t:_bNow,dur:500};
-          // Point 14: Animated toast
-          var _msgs=['\u26a1\u26a1 DEVASTATION!! \u26a1\u26a1','\u26a1\u26a1 OBLITERATED!! \u26a1\u26a1',
-            '\u26a1\u26a1 WRECKING BALL!! \u26a1\u26a1','\u26a1\u26a1 TOTAL CARNAGE!! \u26a1\u26a1',
-            '\u26a1\u26a1 BODY SLAM!! \u26a1\u26a1','\u26a1\u26a1 DESTRUCTION!! \u26a1\u26a1'];
-          showMsg(_msgs[~~(Math.random()*_msgs.length)]);
-          // Point 15: Strong vibration 50% for 400ms
-          try{var _gps=navigator.getGamepads?navigator.getGamepads():[];
-            for(var _gi=0;_gi<_gps.length;_gi++){var _gp=_gps[_gi];
-              if(_gp&&_gp.vibrationActuator)_gp.vibrationActuator.playEffect('dual-rumble',
-                {duration:400,strongMagnitude:0.50,weakMagnitude:0.50});}
-          }catch(e){}
-          fxTrigger('hitFlash',1.0);
-          if(dm._pivotX!==undefined)dm._pivotX+=cb.side*0.25;
+          _bumpStrikeStart(_tgt,cb.side,_cdz,_bNow);
+        } else if(cb.on&&!cb.charged&&_prog>0.2){
+          showToast('HOLD RB UNTIL LOCKED — THEN RELEASE',false);
         }
-        cb.on=false;cb.charged=false;cb.tIdx=-1;
-      } else {
-        // Still holding RB
+        cb.on=false;cb.charged=false;cb.tIdx=-1;cb.prog=0;
+        dm._chargeBump=null;
+      } else if(cb.on) {
         if(_prog>=1&&!cb.charged){
           cb.charged=true;
-          showMsg('\u2705 LOCKED \u2022 RELEASE RB TO STRIKE!');
+          showMsg('🎯 LOCKED • RELEASE RB TO STRIKE!');
+          try{ sfxBeep(880,0.07,0.18); setTimeout(function(){try{sfxBeep(1320,0.09,0.18);}catch(e){}},70); }catch(e){}
         }
-        // Point 15: 2% vibration while charging
         try{if((_bNow|0)%150<20){var _gps=navigator.getGamepads?navigator.getGamepads():[];
           for(var _gi=0;_gi<_gps.length;_gi++){var _gp=_gps[_gi];
             if(_gp&&_gp.vibrationActuator)_gp.vibrationActuator.playEffect('dual-rumble',
-              {duration:80,strongMagnitude:0.02,weakMagnitude:0.02});}
+              {duration:80,strongMagnitude:cb.charged?0.10:0.02,weakMagnitude:cb.charged?0.10:0.02});}
         }}catch(e){}
+        dm._bumpLockZoom=0.92-_prog*0.04;
+        dm._chargeBump={active:true,side:cb.side,progress:_prog,charged:cb.charged,
+          target:_tgt,nTargets:cb.allIdx.length,gapSeg:_cdz/SEG_LEN};
       }
-      // Zoom camera out slightly during lock-on
-      dm._bumpLockZoom=0.92-_prog*0.04;  // zooms out to 0.88 at full charge
-      dm._chargeBump={active:cb.on,side:cb.side,progress:_prog,
-        charged:cb.charged,target:_tgt,nTargets:cb.allIdx.length};
     } else { dm._chargeBump=null; }
+
+    /* ═══ HOMING STRIKE. Closes the gap to the locked rival in a fixed,
+       range-scaled time (0.26 s alongside, up to 0.64 s at 80 segments):
+       the speed ceiling is lifted just enough to arrive on time and the
+       machine steers across to hit the rival's flank. Other rivals are
+       passed through (see the collider) so a strike is never stolen by a
+       car in between. */
+    if(P._strike){
+      var _st=P._strike, _T=_st.tgt;
+      var _gap=_T.z-P.z; if(_gap>trackLength/2)_gap-=trackLength; if(_gap<-trackLength/2)_gap+=trackLength;
+      /* Simulation time, not wall-clock: at a low frame rate the fixed-step
+         loop runs slower than real time and a wall-clock strike ran out
+         before it had covered the gap. */
+      _st.el=(_st.el||0)+dt*1000;
+      var _el=_st.el, _rem=_st.dur-_el;
+      if(_T.finished||_T.exploded){ P._strike=null; P._strikeTop=0; dm._strikeFx=null; showToast('✖ STRIKE LOST',false); }
+      else if(_gap<=SEG_LEN*1.1||_rem<=0){
+        P._strike=null; P._strikeTop=0; dm._strikeFx=null;
+        if(_gap<SEG_LEN*10)_bumpImpact(_T,_st,_bNow);
+        else showToast('✖ STRIKE FELL SHORT',false);
+      } else {
+        var _need=Math.max(0,_gap-SEG_LEN*0.9)/Math.max(0.05,_rem/1000);
+        var _want=(_T.speed||0)+_need;
+        P._strikeTop=Math.min(MAX_SPEED*2.8,Math.max(_want,P.speed));
+        P.speed=Math.max(P.speed,Math.min(P._strikeTop,_want));
+        var _ax=_T.x-_st.side*0.30;
+        P.x+=(_ax-P.x)*Math.min(1,dt*(6+10*Math.min(1,_el/_st.dur)));
+        P.lean=(P.lean||0)+(_st.side*0.6-(P.lean||0))*Math.min(1,dt*8);
+        dm._strikeFx={k:Math.min(1,_el/_st.dur),side:_st.side,t0:_st.t0};
+      }
+    }
 
     // Point 9: Animated lurch (lerp) — clamped to road bounds so the player
     // can never lurch through the road edge regardless of road width
@@ -9595,39 +9800,56 @@ function updatePlayer(dt,inp){
     // BUMP CAMERA — cinematic orbital tracking shot
     // Forward tracking dolly → frontal semi-arc → 360° orbital flyaround
     // Medium low-angle two-shot keeping both vehicles centred
-    if(dm._bumpZoom){
+    /* ═══ STRIKE CAMERA (request 3 item 1). Four beats, all through the
+       real orbit axes (and so through the envelope and tunnel guard):
+         LUNGE     while homing: eye drops low and trails, lens widens —
+                   the ground rushes;
+         IMPACT    0-130 ms, under the hit-stop: hard cut to a low side-on
+                   two-shot with a roll kick — the frozen moment of contact;
+         AFTERMATH 130-1150 ms, in slow motion: the eye swings round behind
+                   the struck side and rises, so the rival is seen spinning
+                   away and falling behind as the player surges clear;
+         RETURN    1150-1500 ms: eased back to the chase view. */
+    if(P._strike&&dm._strikeFx){
+      var _lk=dm._strikeFx.k, _ls=dm._strikeFx.side, _le=_lk*_lk*(3-2*_lk);
+      dm._bumpCamOrbit={az:_ls*0.10*_le, zoom:1-0.16*_le, lift:-0.10*_le, pitch:0.03*_le,
+                        z:-1.5*_le, x:-_ls*0.10*_le, roll:_ls*0.05*_le};
+      dm._bumpCamZoom=1;dm._bumpCamX=0;
+      try{ _fovPunch=Math.max(_fovPunch||0,0.06*_le); }catch(e){}
+    }
+    else if(dm._bumpZoom){
       var _bz=dm._bumpZoom, _bt=_bNow-_bz.t;
-      // Phase 1 (0-280ms): Forward tracking dolly — camera rushes to
-      //   frontal position ahead of both cars, low angle, zoomed in
-      // Phase 2 (280-1680ms): orbital flyaround — camera orbits around
-      //   both vehicles via orbitAz, maintaining a two-shot framing
-      // Phase 3 (1680-2050ms): Return — camera eases back to chase position
-      /* ═══ SLINGSHOT CAMERA — READ THE PAYOFF
-         The old sequence flew a full 360-degree orbit around both cars for
-         1.4s: spectacular, but it hid the moment that matters (the player
-         surging past while the rival drops back) and left the player
-         disoriented as control resumed. Now: a short punch-in toward the
-         struck side, a pull-back that widens, rises slightly and looks back
-         toward that side so the rival is seen falling behind, then a quick
-         return to the chase view. */
-      var _p1=180, _p2=720, _p3=350;
-      var _td=_p1+_p2+_p3;
-      if(_bt<_td){
+      var _P1=130, _P2=1150, _P3=1500;
+      if(_bt<_P3){
         var _dir=_bz.dir, _sm=function(x){x=Math.max(0,Math.min(1,x));return x*x*(3-2*x);};
-        var _pin=_sm(_bt/_p1), _pull=_sm((_bt-_p1)/_p2), _ret=_sm((_bt-_p1-_p2)/_p3);
-        var _az=_dir*0.12*_pin*(1-_pull) - _dir*0.20*_pull;
-        var _zoom=1+0.15*_pin*(1-_pull) - 0.18*_pull;
-        var _lift=0.25*_pull, _pitch=-0.06*_pull, _z=4*_pull, _x=-_dir*0.25*_pull;
-        var _k=1-_ret;
-        dm._bumpCamOrbit={ az:_az*_k, zoom:1+(_zoom-1)*_k, lift:_lift*_k, pitch:_pitch*_k, z:_z*_k, x:_x*_k };
-        // Keep canvas zoom/pan at 1 — all movement is through the real orbit system
+        var _o;
+        if(_bt<_P1){
+          var _kk=1-_bt/_P1;
+          /* Fixed-side yaw: measured on the harness, a negative yaw keeps
+             the machine in frame whichever side the rival is on; a positive
+             one drops it below the frame edge. */
+          _o={az:-0.64, zoom:1.28, lift:0.20, pitch:0.04, z:0, x:0, roll:_dir*(0.07+0.06*_kk)};
+          if(_bt<_P1*0.5&&!_bz.cut){ _bz.cut=true; try{ _camCutReset(); }catch(e){} }
+        } else if(_bt<_P2){
+          var _a=_sm((_bt-_P1)/(_P2-_P1));
+          _o={az:-0.64+0.52*_a, zoom:1.28-0.20*_a, lift:0.20+0.32*_a, pitch:0.04+0.12*_a,
+              z:-3.0*_a, x:0, roll:_dir*0.07*(1-_a)};
+        } else {
+          var _r2=_sm((_bt-_P2)/(_P3-_P2)), _k=1-_r2;
+          _o={az:-0.12*_k, zoom:1+0.08*_k, lift:0.52*_k, pitch:0.16*_k, z:-3.0*_k, x:0, roll:0};
+        }
+        dm._bumpCamOrbit=_o;
         dm._bumpCamZoom=1;dm._bumpCamX=0;
       } else {
         dm._bumpZoom=null;dm._bumpCamOrbit=null;
         dm._bumpCamZoom=1;dm._bumpCamX=0;
         dm._bumpLockZoom=null;
+        dm._orbitZ=0; dm._orbitRoll=0; dm._orbitPitch=0;
       }
     }
+    else if(dm._bumpCamOrbit&&!P._strike){ dm._bumpCamOrbit=null; dm._orbitZ=0; dm._orbitRoll=0; dm._orbitPitch=0; }
+    /* First person keeps its own eye: the strike plays from the cockpit. */
+    if(_camMode===5)dm._bumpCamOrbit=null;
     // Lock-on: slight zoom out via canvas scale while charging
     if(!dm._bumpZoom&&dm._bumpLockZoom&&dm._chargeBump&&dm._chargeBump.active){
       dm._bumpCamZoom=dm._bumpLockZoom;
@@ -9670,6 +9892,7 @@ var _leanHelp=0;
   const _bkRaw=s.bank||0;
   const _bankK=(_bkRaw&&Math.sign(_bkRaw)===Math.sign(s.curve||0))?Math.min(1,Math.abs(_bkRaw)):0;
   const _surf=(s.surf&&SURFACES[s.surf])||null;
+  if(s.offCamber){ if(!P._inOC){ P._inOC=true; if(!dm.demo)showMsg('\u26a0 OFF-CAMBER!'); } } else P._inOC=false;
   let _latDrift;
   if(!_air&&spct<=1){
     _latDrift=-(1.166*(1+CityLink.gripBonus())*_leanGrip*Math.pow(Math.max(0,spct),3.2)*s.curve);
@@ -9697,6 +9920,9 @@ var _leanHelp=0;
          • load beyond grip adds a further outward slide on top.
        No steering in a corner = the car runs wide into the outside wall. */
     if(_bankK)_latDrift*=(1-0.70*_bankK);
+    /* OFF-CAMBER (request 3 item 5): a bank leaning AWAY from the bend
+       throws the car outward instead of holding it. */
+    else if(_bkRaw&&s.curve)_latDrift*=(1+0.45*Math.min(1,Math.abs(_bkRaw)));
     const _vx=P.vx||0;
     const _acc=((P._latCmd||0)-_vx)/LAT_TAU;        // steering command only
     const _load=Math.abs(s.curve||0)*_spd2*CORNER_LOAD*(1-0.55*_bankK);   // holding the bend
@@ -10441,8 +10667,14 @@ function updateRivals(dt){
   /* Stamp so per-frame budgets (contact damage, bounce accumulation) can tell
      one frame's worth of pair resolutions from the next. */
   _collFrame++;
+  const _ghNow=performance.now();
   for(let i=0;i<nb;i++)for(let j=i+1;j<nb;j++){
     const A=bodies[i],B=bodies[j];
+    /* A homing strike passes through every car but its target, and a struck
+       rival is ghosted against the player while it is thrown clear. */
+    if(A===P||B===P){ const O=(A===P)?B:A;
+      if(P._strike&&O!==P._strike.tgt)continue;
+      if(O._bumpGhostUntil&&_ghNow<O._bumpGhostUntil)continue; }
     let dz=B.z-A.z;if(dz>trackLength/2)dz-=trackLength;if(dz<-trackLength/2)dz+=trackLength;
     // AABB: half-extents along the track (z) and across it (x).
     const overlapZ=Math.abs(dz)<MAGNET.boxZ;
@@ -12099,7 +12331,7 @@ function _renderWorldImpl(vw,vh,camPan){
     /* (2) ORIENTATION GUARANTEE FOR ATTRACT MODE. Enforced at the TOP of the render, before anything reads _camMode. */
   /* Attract mode drives the orbit itself, so first person (the only remaining
      discrete mode) must not be active while it does. */
-  if(dm.demo&&_camMode===5)_camMode=0;
+  if(dm.demo&&_camMode===5&&!(dm._dbgView&&dm._dbgView.fpv))_camMode=0;
   /* ═══ NEUTRAL BASE CAMERA IN DEMO (plan item 9)
      Every shot in the table is authored relative to the home chase distance.
      A different base distance changes the eye height and FOV UNDER every
@@ -13190,8 +13422,8 @@ function _renderWorldImpl(vw,vh,camPan){
     /* ── CONTINUOUS CAMERA DISTANCE ON THE RIGHT STICK  The five discrete R3 modes are replaced by one continuous axis running between the two extremes they spanned: _camDist = 0   CLOSE CHASE   tight  */
   let _camYExtra=0; _camFovExtra=1.0;   // reset each frame
   const _cm=_camMode||0;
-  if(_cm===5){          // FIRST PERSON: from inside the cockpit
-    _camYExtra=-CAM_HEIGHT*0.52; _camFovExtra=0.88;
+  if(_cm===5){          // FIRST PERSON: helmet height, slightly wider lens
+    _camYExtra=-CAM_HEIGHT*0.62; _camFovExtra=0.84;
     _cinematicSaved=false;
   } else {
     _cinematicSaved=false;
@@ -13236,7 +13468,8 @@ function _renderWorldImpl(vw,vh,camPan){
     /* Attract mode drives the orbit itself (showcase angles), so the stick
        must not overwrite it — that is why the demo views all looked identical
        on the first attempt. */
-    if(dm._dbgView){
+    const _fpvDbg=!!(dm._dbgView&&dm._dbgView.fpv&&_camMode===5);
+    if(dm._dbgView&&!_fpvDbg){
       /* A debug viewpoint overrides both the stick and the demo showcase. */
       dm._orbitAz=dm._dbgView.az;
       dm._orbitZoom=dm._dbgView.zoom;
@@ -13257,14 +13490,13 @@ function _renderWorldImpl(vw,vh,camPan){
       dm._camZoom=dm._orbitZoom;
     }
     else if(dm._bumpCamOrbit){
-      // Cinematic bump camera — overrides all orbit values
-      dm._orbitAz=dm._bumpCamOrbit.az;
-      dm._orbitX=dm._bumpCamOrbit.x||0;
-      dm._orbitLift=dm._bumpCamOrbit.lift;
-      dm._orbitZoom=dm._bumpCamOrbit.zoom;
-      dm._orbitPitch=dm._bumpCamOrbit.pitch;
-      dm._orbitZ=dm._bumpCamOrbit.z||0;
-      dm._camZoom=dm._bumpCamOrbit.zoom;
+      /* Strike camera — overrides all orbit values, but through the same
+         envelope and tunnel guard as every other cinematic pose. */
+      const _bo=dm._bumpPoseTest||dm._bumpCamOrbit;
+      const _be=_encloseCamera(_camEnvelope([_bo.az||0,_bo.zoom||1,_bo.lift||0,_bo.pitch||0,_bo.roll||0,_bo.z||0,_bo.x||0]));
+      dm._orbitAz=_be[0]; dm._orbitZoom=_be[1]; dm._orbitLift=_be[2]; dm._orbitPitch=_be[3];
+      dm._orbitRoll=_be[4]; dm._orbitZ=_be[5]; dm._orbitX=_be[6];
+      dm._camZoom=_be[1];
     }
     else if(_camMode>=6&&!(dm.demo&&race&&race.attract)){
       /* DRIVING VIEWPOINTS — pose from the view, through the same envelope
@@ -13274,6 +13506,21 @@ function _renderWorldImpl(vw,vh,camPan){
       for(let k=0;k<7;k++)V[k]+=(_vp[k]-V[k])*0.08;
       dm._orbitAz=V[0]; dm._orbitZoom=V[1]; dm._orbitLift=V[2]; dm._orbitPitch=V[3];
       dm._orbitRoll=0; dm._orbitZ=V[5]; dm._orbitX=V[6]; dm._camZoom=V[1];
+    }
+    else if(_camMode===5&&(_fpvDbg||!(dm.demo&&race&&race.attract))){
+      /* ═══ TRUE FIRST PERSON (request 3 item 2). The chase eye sits 4.5
+         segments behind the machine; first person moves the eye forward onto
+         the machine itself (Z-traverse), down to helmet height, and rolls it
+         with the machine's lean and the road's bank, with a speed-scaled
+         shake so the ground rushes past. The right stick still glances
+         sideways. */
+      const _sp=clamp(P.speed/MAX_SPEED,0,1.4);
+      const _tt=animNow()/1000;
+      dm._orbitZ=4.35;
+      dm._orbitAz=P._camSide*0.9;
+      dm._orbitX=(P._camSide*0.10)+Math.sin(_tt*23)*0.004*_sp;
+      dm._orbitRoll=clamp((P.lean||0),-0.55,0.55)*0.16+Math.sin(_tt*17)*0.003*_sp;
+      dm._orbitPitch=Math.sin(_tt*29)*0.004*_sp;
     }
     else if(!(dm.demo&&race&&race.attract)){
       dm._orbitAz=P._camSide*1.54;
@@ -17135,130 +17382,6 @@ function drawRival(r,vw,vh){
      ctx.ellipse(cx2,y2-h*0.2,w*0.85,h*0.7,0,0,Math.PI*2);ctx.fill();ctx.restore();
    }
 
-          // ═══ BUMP MOVEMENT LINES + IMPACT FLASH
-  if(dm._bumpFx&&performance.now()-dm._bumpFx.t<dm._bumpFx.dur){
-    ctx.save();ctx.setTransform(1,0,0,1,0,0);
-    var _mfx=dm._bumpFx,_mt=(performance.now()-_mfx.t)/_mfx.dur;
-    var _mcx=dm._carDrawX||vw/2,_mcy=dm._carDrawY||vh*0.85;
-    ctx.strokeStyle='#fff';ctx.lineCap='round';
-    for(var _mi=0;_mi<14;_mi++){
-      ctx.globalAlpha=(1-_mt)*0.9*(0.3+(_mi%4)*0.2);
-      ctx.lineWidth=1.5+(_mi%3)*1.5;
-      var _my=_mcy-50+_mi*7,_mx=_mcx+_mfx.dir*(12+_mt*65+_mi*5);
-      ctx.beginPath();ctx.moveTo(_mx,_my);ctx.lineTo(_mx+_mfx.dir*(12+_mi*3+_mt*22),_my);ctx.stroke();
-    }
-    ctx.globalAlpha=1;ctx.restore();
-  }
-  if(dm._impactFlash&&performance.now()-dm._impactFlash.t<dm._impactFlash.dur){
-    ctx.save();ctx.setTransform(1,0,0,1,0,0);
-    var _it=(performance.now()-dm._impactFlash.t)/dm._impactFlash.dur;
-    var _ix=(dm._carDrawX||vw/2)+(dm._bumpFx?dm._bumpFx.dir*vw*0.15:0);
-    var _iy=(dm._carDrawY||vh*0.85)-vh*0.12;
-    var _ir=20+_it*vw*0.3;
-    ctx.strokeStyle='rgba(255,255,255,'+((1-_it)*0.9).toFixed(3)+')';
-    ctx.lineWidth=Math.max(1,4-_it*3);ctx.shadowColor='#fff';ctx.shadowBlur=20*(1-_it);
-    ctx.beginPath();ctx.arc(_ix,_iy,_ir,0,Math.PI*2);ctx.stroke();
-    if(_it<0.25){
-      var _ifg=ctx.createRadialGradient(_ix,_iy,0,_ix,_iy,_ir*0.5);
-      _ifg.addColorStop(0,'rgba(255,255,200,'+((1-_it/0.25)*0.7).toFixed(3)+')');
-      _ifg.addColorStop(1,'rgba(255,255,200,0)');
-      ctx.fillStyle=_ifg;ctx.fillRect(0,0,vw,vh);
-    }
-    // 500 scatter particles
-    ctx.shadowBlur=0;
-    var _pSeed=dm._impactFlash.t;
-    for(var _pi=0;_pi<500;_pi++){
-      var _pa=(_pi/500)*Math.PI*2+(_pi*2.399);  // golden angle spread
-      var _pSpeed=0.3+(((_pi*7919+~~_pSeed)%1000)/1000)*0.7;
-      var _pDist=_it*_pSpeed*vw*0.45;
-      var _px=_ix+Math.cos(_pa)*_pDist;
-      var _py=_iy+Math.sin(_pa)*_pDist-_it*_it*vh*0.15*_pSpeed; // gravity
-      var _pAlpha=(1-_it)*(0.3+(_pi%3)*0.25);
-      if(_px<-10||_px>vw+10||_py<-10||_py>vh+10)continue;
-      var _pSize=1+(_pi%4)*0.8*(1-_it);
-      var _pHue=30+(_pi%60);  // warm orange-yellow spread
-      ctx.globalAlpha=_pAlpha;
-      ctx.fillStyle='hsl('+_pHue+',100%,'+(50+(_pi%30))+'%)';
-      ctx.fillRect(_px,_py,_pSize,_pSize);
-    }
-    ctx.globalAlpha=1;
-    ctx.shadowBlur=0;ctx.restore();
-  }
-
-  // ═══ CHARGE BUMP HUD — crosshair, bar, READY, lock line
-  if(dm._chargeBump&&dm._chargeBump.active&&dm._chargeBump.target){
-    ctx.save();ctx.setTransform(1,0,0,1,0,0);
-    var _cbh=dm._chargeBump,_ctgt=_cbh.target,_cprog=_cbh.progress,_cnow=performance.now();
-    var _tSg=null;try{_tSg=seg(_ctgt.z);}catch(e){}
-    if(_tSg&&_tSg.p1&&_tSg.p1.screen){
-      var _tx=_tSg.p1.screen.x+_tSg.p1.screen.w*_ctgt.x/ROAD_WIDTH*0.5;
-      var _ty=_tSg.p1.screen.y;
-      var _cA=0.6+0.4*Math.sin(_cnow*0.012);
-      // Crosshair
-      var _csz=44+Math.sin(_cnow*0.008)*8;
-      var _crot=_cnow*0.003;
-      ctx.strokeStyle='rgba(255,255,255,'+_cA.toFixed(3)+')';
-      ctx.lineWidth=3;ctx.shadowColor='rgba(255,100,50,0.9)';ctx.shadowBlur=16;
-      ctx.beginPath();ctx.arc(_tx,_ty-20,_csz,0,Math.PI*2);ctx.stroke();
-      for(var _cci=0;_cci<4;_cci++){
-        var _ccA=_crot+_cci*Math.PI/2;
-        ctx.beginPath();
-        ctx.moveTo(_tx+Math.cos(_ccA)*_csz*0.5,_ty-20+Math.sin(_ccA)*_csz*0.5);
-        ctx.lineTo(_tx+Math.cos(_ccA)*_csz*1.6,_ty-20+Math.sin(_ccA)*_csz*1.6);
-        ctx.stroke();
-      }
-      ctx.fillStyle='rgba(255,60,30,'+_cA.toFixed(3)+')';
-      ctx.beginPath();ctx.arc(_tx,_ty-20,6,0,Math.PI*2);ctx.fill();
-      // Charge bar
-      var _bW=74,_bH=11,_bX=_tx-_bW/2,_bY=_ty-20-_csz*1.8-_bH-10;
-      ctx.shadowBlur=0;
-      ctx.fillStyle='rgba(0,0,0,0.7)';ctx.fillRect(_bX-2,_bY-2,_bW+4,_bH+4);
-      ctx.strokeStyle='rgba(255,255,255,0.8)';ctx.lineWidth=1;
-      ctx.strokeRect(_bX-2,_bY-2,_bW+4,_bH+4);
-      ctx.fillStyle=_cbh.charged?'rgba(100,255,100,0.95)':'rgba(255,255,255,0.92)';
-      ctx.fillRect(_bX,_bY,_bW*_cprog,_bH);
-      if(_cbh.charged){
-        var _rdp=0.5+0.5*Math.sin(_cnow*0.015);
-        ctx.font='bold 38px monospace';ctx.textAlign='center';
-        ctx.fillStyle='rgba(100,255,100,'+_rdp.toFixed(3)+')';
-        ctx.shadowColor='rgba(100,255,100,0.9)';ctx.shadowBlur=22;
-        ctx.fillText('READY',_tx,_bY-22);
-      } else {
-        ctx.font='bold 18px monospace';ctx.textAlign='center';
-        ctx.fillStyle='rgba(255,255,255,0.85)';
-        ctx.fillText(~~(_cprog*100)+'%',_tx,_bY-8);
-      }
-      // Lock line
-      var _plx2=dm._carDrawX||vw/2,_ply2=dm._carDrawY||vh*0.85;
-      ctx.setLineDash([10,8]);ctx.shadowBlur=0;
-      ctx.strokeStyle='rgba(255,200,100,'+(0.3+_cprog*0.5).toFixed(3)+')';
-      ctx.lineWidth=2;
-      ctx.beginPath();ctx.moveTo(_plx2,_ply2-10);ctx.lineTo(_tx,_ty-20);ctx.stroke();
-      ctx.setLineDash([]);
-      // Target count
-      if(_cbh.nTargets>1){
-        ctx.font='bold 12px monospace';ctx.textAlign='center';
-        ctx.fillStyle='rgba(255,255,200,0.7)';
-        ctx.fillText('LB: NEXT TARGET ('+_cbh.nTargets+')',_tx,_ty+_csz+16);
-      }
-    }
-    // RB label
-    var _rlx=dm._carDrawX||vw/2,_rly=dm._carDrawY||vh*0.85;
-    ctx.font='bold 30px monospace';ctx.textAlign='center';
-    ctx.fillStyle='rgba(255,255,255,'+(0.6+0.4*Math.sin(_cnow*0.012)).toFixed(3)+')';
-    ctx.shadowColor='rgba(255,200,0,0.8)';ctx.shadowBlur=14;
-    ctx.fillText('RB',_rlx+(dm._playerCarW||vw*0.08)*1.2,_rly+5);
-    // Edge glow during charge
-    if(_cprog>0.1){
-      ctx.shadowBlur=0;
-      ctx.fillStyle='rgba(255,160,40,'+(Math.min(0.4,_cprog*0.4)).toFixed(3)+')';
-      if(_cbh.side<0)ctx.fillRect(0,0,vw*0.03,vh);
-      else ctx.fillRect(vw*0.97,0,vw*0.03,vh);
-    }
-    ctx.shadowBlur=0;ctx.restore();
-  }
-
-    // ═══ BUMP EDGE GLOW — white pulsating border on the impacting side
 
 
   }
@@ -17284,6 +17407,23 @@ function drawRival(r,vw,vh){
       speed:r.speed/MAX_SPEED, airborne:(r.airUntil>_rnow)
     });
   }catch(e){}
+  /* STUNNED — a struck rival shows it: orbiting sparks and a countdown. */
+  if(r._stunUntil&&_rnow<r._stunUntil&&w>6){
+    const _sl=(r._stunUntil-_rnow)/1000, _ang=_rnow/140;
+    ctx.save();
+    for(let k=0;k<4;k++){
+      const a=_ang+k*Math.PI/2;
+      ctx.fillStyle=k%2?'#ffe14d':'#ff7a3d';
+      ctx.beginPath();ctx.arc(cx2+Math.cos(a)*w*0.42,y2-h*1.25+Math.sin(a)*h*0.22,Math.max(1.5,w*0.05),0,Math.PI*2);ctx.fill();
+    }
+    if(w>18){
+      ctx.font='bold '+Math.max(9,Math.min(18,~~(w*0.18)))+'px monospace';
+      ctx.textAlign='center';ctx.textBaseline='bottom';
+      ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillText('STUNNED '+_sl.toFixed(1)+'s',cx2+1,y2-h*1.55+1);
+      ctx.fillStyle='#ffd24d';ctx.fillText('STUNNED '+_sl.toFixed(1)+'s',cx2,y2-h*1.55);
+    }
+    ctx.restore();
+  }
   if(w>26&&r._rank){
     const _tagH=Math.max(9,Math.min(20,w*0.22));
     const _lineTop=y2-h-_tagH*1.15;
@@ -17298,6 +17438,155 @@ function drawRival(r,vw,vh){
     ctx.textAlign='center';ctx.textBaseline='bottom';
     ctx.fillText('R '+r._rank,cx2,_lineTop-1);
   }
+}
+
+/* ═══ BUMP FX + HUD — drawn ONCE per frame.
+   This used to live inside drawRival, so every effect (including a
+   500-particle burst) was drawn once per rival — 7x overdraw. */
+function drawBumpFX(vw,vh){
+  const now=performance.now();
+  const pcx=dm._carDrawX||vw/2, pcy=dm._carDrawY||vh*0.85;
+  ctx.save();ctx.setTransform(1,0,0,1,0,0);
+  // ── IN RANGE: RB hint so the player knows a bump is available NOW
+  if(dm._bumpInRange&&!dm._chargeBump&&!P._strike&&!dm._bumpZoom&&!race.over&&_camMode!==5){
+    const a=0.55+0.25*Math.sin(now*0.008);
+    ctx.font='bold '+Math.round(Math.max(11,vh*0.018))+'px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
+    const txt='RB ▸ BUMP ('+dm._bumpInRange+' IN RANGE)';
+    const tw=ctx.measureText(txt).width+18, ty=pcy+vh*0.055;
+    ctx.fillStyle='rgba(0,0,0,'+(0.45*a).toFixed(3)+')';ctx.fillRect(pcx-tw/2,ty-11,tw,22);
+    ctx.fillStyle='rgba(255,200,90,'+a.toFixed(3)+')';ctx.fillText(txt,pcx,ty);
+  }
+  // ── LOCK-ON: crosshair on the target, lock bar, range and an effect preview
+  const cbh=dm._chargeBump;
+  if(cbh&&cbh.active&&cbh.target){
+    const T=cbh.target, pr=cbh.progress;
+    let tx=null,ty=null;
+    try{ const g=seg((T._rz!==undefined)?T._rz:T.z); if(g&&g.p1&&g.p1.screen&&g.p1.screen.w){ tx=g.p1.screen.x+g.p1.screen.w*((T._rx!==undefined)?T._rx:T.x); ty=g.p1.screen.y; } }catch(e){}
+    if(tx==null||!isFinite(tx)||!isFinite(ty)||ty<0||ty>vh){ tx=vw/2; ty=vh*0.42; }
+    ty-=20;
+    const pulse=0.6+0.4*Math.sin(now*0.012);
+    const col=cbh.charged?'100,255,120':'255,190,80';
+    const csz=(cbh.charged?38:52-pr*14)+Math.sin(now*0.01)*4;
+    ctx.strokeStyle='rgba('+col+','+pulse.toFixed(3)+')';ctx.lineWidth=3;
+    ctx.shadowColor='rgba('+col+',0.9)';ctx.shadowBlur=14;
+    ctx.beginPath();ctx.arc(tx,ty,csz,-Math.PI/2,-Math.PI/2+Math.PI*2*pr);ctx.stroke();
+    for(let k=0;k<4;k++){ const a=now*0.003*(cbh.charged?3:1)+k*Math.PI/2;
+      ctx.beginPath();ctx.moveTo(tx+Math.cos(a)*csz*0.55,ty+Math.sin(a)*csz*0.55);
+      ctx.lineTo(tx+Math.cos(a)*csz*1.35,ty+Math.sin(a)*csz*1.35);ctx.stroke(); }
+    ctx.shadowBlur=0;
+    // tether from player to target
+    ctx.setLineDash([10,8]);ctx.lineDashOffset=-now*0.06;
+    ctx.strokeStyle='rgba('+col+','+(0.3+pr*0.5).toFixed(3)+')';ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(pcx,pcy-10);ctx.lineTo(tx,ty);ctx.stroke();ctx.setLineDash([]);
+    // label stack above the crosshair
+    ctx.textAlign='center';ctx.textBaseline='bottom';
+    ctx.font='bold '+(cbh.charged?30:18)+'px monospace';
+    ctx.fillStyle='rgba('+col+','+(cbh.charged?pulse:0.95).toFixed(3)+')';
+    ctx.fillText(cbh.charged?'RELEASE RB!':'LOCKING '+~~(pr*100)+'%',tx,ty-csz-12);
+    ctx.font='bold 13px monospace';ctx.fillStyle='rgba(255,255,255,0.85)';
+    const gs=Math.round(cbh.gapSeg||0);
+    ctx.fillText((T.name||'RIVAL')+' · '+(gs>=0?gs+' SEG AHEAD':(-gs)+' SEG BEHIND')+(cbh.nTargets>1?' · LB NEXT ('+cbh.nTargets+')':''),tx,ty-csz-(cbh.charged?44:34));
+    // effect preview strip — what landing this bump will do
+    const lines=[['RIVAL','-86% SPEED · STUN 2.8s · -18% SHIELD','#ff8a6a'],
+                 ['YOU','+22% SLINGSHOT · -5% SHIELD','#7dffb0']];
+    const pfs=Math.round(Math.max(9,Math.min(13,vh*0.026)));
+    ctx.font='bold '+pfs+'px monospace';ctx.textBaseline='middle';
+    const plw=ctx.measureText('RIVAL ').width+pfs;
+    const bw=Math.max(ctx.measureText(lines[0][1]).width,ctx.measureText(lines[1][1]).width)+plw+pfs*1.6;
+    const bh=pfs*3.6, bx=vw/2-bw/2, by=vh*0.93-bh;
+    ctx.fillStyle='rgba(6,8,18,0.72)';ctx.fillRect(bx,by,bw,bh);
+    ctx.strokeStyle='rgba('+col+',0.7)';ctx.lineWidth=1;ctx.strokeRect(bx+0.5,by+0.5,bw-1,bh-1);
+    ctx.fillStyle='rgba('+col+',0.9)';ctx.textAlign='center';ctx.fillText('ON RELEASE',bx+bw/2,by-pfs*0.8);
+    for(let k=0;k<2;k++){ ctx.textAlign='left';ctx.fillStyle=lines[k][2];ctx.fillText(lines[k][0],bx+pfs*0.8,by+pfs*(1.1+k*1.4));
+      ctx.fillStyle='#fff';ctx.fillText(lines[k][1],bx+pfs*0.8+plw,by+pfs*(1.1+k*1.4)); }
+    // screen-edge glow on the target's side
+    ctx.fillStyle='rgba('+col+','+(Math.min(0.35,pr*0.35)).toFixed(3)+')';
+    if(cbh.side<0)ctx.fillRect(0,0,vw*0.025,vh); else ctx.fillRect(vw*0.975,0,vw*0.025,vh);
+  }
+  // ── LUNGE: converging speed lines toward the target side
+  if(P._strike&&dm._strikeFx){
+    const k=dm._strikeFx.k, sd=dm._strikeFx.side;
+    const cx=vw/2+sd*vw*0.12, cy=vh*0.45;
+    ctx.strokeStyle='rgba(255,240,200,'+(0.25+0.45*k).toFixed(3)+')';ctx.lineCap='round';
+    for(let i=0;i<46;i++){
+      const a=i*2.399+now*0.001, r0=vh*(0.25+((i*37)%50)/100), len=vh*(0.08+0.22*k)*(0.5+((i*13)%10)/10);
+      ctx.lineWidth=1+(i%3);
+      ctx.beginPath();ctx.moveTo(cx+Math.cos(a)*r0,cy+Math.sin(a)*r0);
+      ctx.lineTo(cx+Math.cos(a)*(r0+len),cy+Math.sin(a)*(r0+len));ctx.stroke();
+    }
+    ctx.fillStyle='rgba(255,255,255,'+(0.10*k).toFixed(3)+')';ctx.fillRect(0,0,vw,vh);
+  }
+  // ── IMPACT: white-out, shock ring, sparks
+  if(dm._impactFlash&&now-dm._impactFlash.t<dm._impactFlash.dur){
+    const it=(now-dm._impactFlash.t)/dm._impactFlash.dur;
+    const ix=pcx+(dm._bumpFx?dm._bumpFx.dir*vw*0.10:0), iy=pcy-vh*0.10;
+    if(it<0.12){ ctx.fillStyle='rgba(255,255,255,'+(0.85*(1-it/0.12)).toFixed(3)+')';ctx.fillRect(0,0,vw,vh); }
+    for(let rr=0;rr<3;rr++){
+      const t2=Math.max(0,it-rr*0.08); if(t2<=0)continue;
+      ctx.strokeStyle='rgba(255,'+(230-rr*50)+','+(180-rr*60)+','+((1-t2)*0.9).toFixed(3)+')';
+      ctx.lineWidth=Math.max(1,6-t2*5);
+      ctx.beginPath();ctx.arc(ix,iy,20+t2*vw*(0.32+rr*0.08),0,Math.PI*2);ctx.stroke();
+    }
+    const seed=dm._impactFlash.t|0;
+    for(let i=0;i<160;i++){
+      const a=i*2.399, sp=0.3+(((i*7919+seed)%1000)/1000)*0.7, d=it*sp*vw*0.45;
+      const px=ix+Math.cos(a)*d, py=iy+Math.sin(a)*d+it*it*vh*0.20*sp;
+      if(px<0||px>vw||py<0||py>vh)continue;
+      ctx.globalAlpha=(1-it)*(0.4+(i%3)*0.2);
+      ctx.fillStyle='hsl('+(28+(i%40))+',100%,'+(55+(i%30))+'%)';
+      const sz=2+(i%4)*(1-it)*1.5; ctx.fillRect(px,py,sz,sz);
+    }
+    ctx.globalAlpha=1;
+  }
+  // ── IMPACT CARD: exactly what the bump just did, sized to the viewport
+  const bc=dm._bumpCard;
+  if(bc){
+    const e=now-bc.t, DUR=3400;
+    if(e>DUR){ dm._bumpCard=null; }
+    else if(e>150){
+      if(!bc.placeAfter&&e>1300)bc.placeAfter=(typeof hud!=='undefined'&&hud.pos)||bc.placeBefore;
+      const inK=Math.min(1,(e-150)/220), outK=e>DUR-400?(DUR-e)/400:1, a=Math.min(inK,outK);
+      const fs=Math.round(Math.max(9,Math.min(15,vh*0.030))), fh=Math.round(fs*1.35);
+      const rows=[
+        [bc.col,String(bc.name).slice(0,10),'SPEED '+bc.rivalSpeed+'%','STUNNED '+bc.stun.toFixed(1)+'s','SHIELD '+bc.rivalShield+'%','#ff8a6a'],
+        ['#7dffb0','YOU','SPEED +'+bc.surge+'%','SLINGSHOT 1.4s','SHIELD '+bc.youShield+'%','#7dffb0']];
+      ctx.font='bold '+fs+'px monospace';
+      const cw1=Math.max(ctx.measureText(rows[0][1]).width,ctx.measureText('YOU').width)+fs;
+      const cw2=Math.max(ctx.measureText(rows[0][2]).width,ctx.measureText(rows[1][2]).width)+fs;
+      const cw3=Math.max(ctx.measureText(rows[0][3]).width,ctx.measureText(rows[1][3]).width)+fs;
+      const cw4=Math.max(ctx.measureText(rows[0][4]).width,ctx.measureText(rows[1][4]).width);
+      const head='⚡ BUMP LANDED'+(bc.range>2?' · '+bc.range+' SEG STRIKE':'');
+      ctx.font='bold '+Math.round(fs*1.3)+'px monospace';
+      const hw=ctx.measureText(head).width;
+      const cw=Math.min(vw-24,Math.max(hw,fs*1.2+cw1+cw2+cw3+cw4)+fs*2), chh=fh*4.6;
+      const cx=vw/2-cw/2+(1-inK)*-50, cy=Math.round(vh*0.30);
+      ctx.globalAlpha=a;
+      ctx.fillStyle='rgba(8,6,16,0.82)';ctx.fillRect(cx,cy,cw,chh);
+      ctx.fillStyle='#ffb13d';ctx.fillRect(cx,cy,cw,3);
+      ctx.textBaseline='middle';ctx.textAlign='left';
+      ctx.fillStyle='#fff';ctx.fillText(head,cx+fs,cy+fh*0.85);
+      ctx.font='bold '+fs+'px monospace';
+      for(let k=0;k<2;k++){
+        const ry=cy+fh*(2.0+k*1.1), rv=Math.min(1,Math.max(0,(e-300-k*160)/260));
+        let x=cx+fs;
+        ctx.globalAlpha=a*rv;
+        ctx.fillStyle=rows[k][0];ctx.fillRect(x,ry-fs*0.45,fs*0.4,fs*0.9); x+=fs*0.8;
+        ctx.fillStyle='#fff';ctx.fillText(rows[k][1],x,ry); x+=cw1;
+        ctx.fillStyle=rows[k][5];ctx.fillText(rows[k][2],x,ry); x+=cw2;
+        ctx.fillStyle=k?'#bfffe0':'#ffd24d';ctx.fillText(rows[k][3],x,ry); x+=cw3;
+        ctx.fillStyle='rgba(255,255,255,0.65)';ctx.fillText(rows[k][4],x,ry);
+      }
+      ctx.globalAlpha=a*Math.min(1,Math.max(0,(e-1300)/300));
+      if(bc.placeAfter){
+        const gained=bc.placeBefore-bc.placeAfter;
+        ctx.textAlign='center';
+        ctx.fillStyle=gained>0?'#7dffb0':'#dfe6ff';
+        ctx.fillText(gained>0?('POSITION P'+bc.placeBefore+' → P'+bc.placeAfter+'  ▲'+gained):('HOLDING P'+bc.placeAfter),vw/2,cy+fh*3.9);
+      }
+      ctx.globalAlpha=1;
+    }
+  }
+  ctx.restore();
 }
 function drawPlayerMachine(vw,vh,camPan){
   const now=animNow();   // (6) frozen while paused
@@ -19247,8 +19536,10 @@ function drawPause(vw,vh){
   const fCtl=Math.max(9,~~Math.min(vh*0.016,11)), ctlLine=fCtl+5;
   const logoPx=Math.max(16,~~Math.min(vh*0.038,26));
   const ctrls=[
-    ['\u2190 \u2192 / L-STICK','Steer'],['\u2191 \u2193 / D-PAD','Menu navigate'],['A / RT','Accelerate'],
-    ['B / LT','Brake'],['Y / RT','Turbo boost'],['LB / RB','Lean into corners'],
+    ['\u2190 \u2192 / L-STICK','Steer'],['\u2191 \u2193 / D-PAD','Menu navigate'],['A','Accelerate'],
+    ['X','Brake'],['B','Turbo boost'],['LT / RT','Lean left / right'],
+    ['RB','Lock on \u00b7 release to bump'],['LB','Next bump target'],
+    ['Y','Chase \u00b7 Close \u00b7 Cinematic \u00b7 1st person'],
     ['R-STICK \u2195','Camera distance'],['START','Pause / Resume']];
   // ── Measure content for a snug fit
   ctx.font='bold '+fMenu+'px monospace';
@@ -19469,7 +19760,7 @@ function drawPodium(vw,vh,dt){
     }
     ctx.font='bold '+~~(vh*0.028)+'px monospace';ctx.fillStyle='#39ff14';
     var _btnLine=dm.fromWorldTour
-      ?padText('A — NEXT RACE   X — RACE AGAIN   B — '+_exitLabel())
+      ?padText('A — NEXT RACE   X — RACE AGAIN   B — TITLE SCREEN')
       :(dm.fromSR
         ?padText('X — RACE AGAIN   A — SUPER RACING MENU   B — '+_exitLabel())
         :padText('X — RACE AGAIN   B — '+_exitLabel()));
@@ -19979,6 +20270,7 @@ function frame(ms){
           dm._bumpZoom=null; dm._bumpCamOrbit=null; dm._chargeBump=null;
           dm._bumpCamZoom=1; dm._bumpCamX=0; dm._bumpLockZoom=null;
           dm._bumpFx=null; dm._impactFlash=null; dm._lurchFx=null;
+          dm._slowMo=null; dm._bumpCard=null; dm._strikeFx=null; if(P){P._strike=null;P._strikeTop=0;}
           dm._orbitRoll=0; dm._orbitAz=0; dm._orbitLift=0;
           dm._orbitPitch=0; dm._orbitZ=0; dm._orbitX=0; dm._orbitZoom=1;
           dm._turboActive=false; dm._turboElapsed=0; dm._turboRemaining=0;
@@ -20062,6 +20354,16 @@ function frame(ms){
         catch(e){ console.warn('continue pick failed',e); }
         if(!ctx)return;  // continuePick→returnToTitle→exit() may have nulled ctx
       }
+    } else if(dm.fromWorldTour){
+      /* ═══ WORLD TOUR FINISH (request 3 item 4) — Xbox layout:
+           A  next race  → the World Tour result, then the map (unlock reveal)
+           X  race again → World Tour restarts this settlement, so the rerun
+                           is recorded and can unlock like any other
+           B  title screen
+         A used to restart the same track in-engine (the hint said NEXT RACE)
+         and that rerun was never recorded by the tour at all. */
+      var _wtAct=inp.aEdge?'next':(inp.xEdge?'replay':(inp.bEdge?'title':null));
+      if(_wtAct){ try{ window.ZS_tourAfter=_wtAct; }catch(e){} exit(); return; }
     } else {
     if(inp.aEdge||(inp.xEdge&&!dm.fromSR)){
       buildTrack(dm.seed);resetRace();raf=requestAnimationFrame(frame);return;
@@ -20125,7 +20427,7 @@ function frame(ms){
   }else{
     // fixed-timestep physics
       /* ═══ RENDER INTERPOLATION — THE MICROSTUTTER  Physics runs at a fixed 60 Hz, but the display almost never does. */
-    acc+=dtReal;let steps=0;
+    acc+=dtReal*_bumpTimeScale();let steps=0;
     while(acc>=STEP&&steps<4){
         /* Snapshot INSIDE the loop, immediately before each step — not once per rendered frame. */
       _snapBodies();
@@ -20175,7 +20477,7 @@ function frame(ms){
          3. SIDEWAYS RUN — the track itself rolls the camera so the player
             briefly drives on the side of the screen. Read from the segment
             under the car and smoothed so it eases rather than steps. */
-    let _roll=(race.attract?(dm._orbitRoll||0):0)||(dm._turboRoll?(dm._orbitRoll||0):0);
+    let _roll=(race.attract?(dm._orbitRoll||0):0)||(dm._turboRoll?(dm._orbitRoll||0):0)||((_camMode===5||dm._bumpCamOrbit)?(dm._orbitRoll||0):0);
     if(!_roll&&P&&!race.attract){
       const _swSeg=seg(P.z);
       const _swTgt=(_swSeg&&_swSeg.sidewaysRoll)?_swSeg.sidewaysRoll:0;
@@ -20338,57 +20640,76 @@ function frame(ms){
   }
   if(race.exploding)drawExplosion(vw,vh);
 // ── (21) FIRST-PERSON COCKPIT FRAME  Drawn over the world but under the HUD and the vignette, so the HUD still floats on top as normal.
-  if(_camMode===5&&!race.paused&&!race.over&&!race.attract){
+  if(_camMode===5&&!race.paused&&!race.over&&(!race.attract||(dm._dbgView&&dm._dbgView.fpv))){
     const night=isNight();
     const lean=clamp((P&&P.lean)||0,-0.55,0.55);
     ctx.save();
     ctx.translate(vw/2,vh); ctx.rotate(lean*0.06); ctx.translate(-vw/2,-vh);
-    const dashY=vh*0.72;
-    // Canopy pillars, left and right, angling inward toward the roof.
-    ctx.fillStyle=night?'rgba(16,15,26,0.96)':'rgba(30,28,46,0.95)';
+    /* ═══ FIRST-PERSON COCKPIT, REDRAWN (request 3 item 2). Low and open:
+       the old canopy pillars hid a fifth of the road. Now a nose cone in the
+       machine's own paint runs forward to a point below the horizon so the
+       player can place the car, flanked by two slim fairings; the dash is a
+       thin lip carrying speed, turbo charges and shield. */
+    const base=dm._carCol||'#2266dd', acc=dm._carAccent||theme.railR||'#66ddff';
+    const sp=clamp(P.speed/MAX_SPEED,0,1.5), tt=animNow()/1000;
+    const bob=Math.sin(tt*21)*vh*0.0025*sp;
+    const dashY=vh*0.86+bob;
+    // nose cone
+    const nx=vw*0.5, tipY=vh*0.70+bob;
+    const ng=ctx.createLinearGradient(0,tipY,0,vh);
+    ng.addColorStop(0,_rgba(base,1)); ng.addColorStop(1,_rgba(night?'#05050c':'#101018',1));
+    ctx.fillStyle=ng;
     ctx.beginPath();
-    ctx.moveTo(0,vh*0.10); ctx.lineTo(vw*0.14,vh*0.34);
-    ctx.lineTo(vw*0.10,dashY); ctx.lineTo(0,dashY);
+    ctx.moveTo(nx,tipY);
+    ctx.bezierCurveTo(nx+vw*0.05,tipY+vh*0.02,nx+vw*0.16,dashY-vh*0.02,nx+vw*0.23,vh);
+    ctx.lineTo(nx-vw*0.23,vh);
+    ctx.bezierCurveTo(nx-vw*0.16,dashY-vh*0.02,nx-vw*0.05,tipY+vh*0.02,nx,tipY);
     ctx.closePath(); ctx.fill();
+    // centre stripe + specular ridge
+    ctx.strokeStyle=_rgba(acc,0.85); ctx.lineWidth=Math.max(2,vw*0.004);
+    ctx.beginPath(); ctx.moveTo(nx,tipY+vh*0.01); ctx.lineTo(nx,vh); ctx.stroke();
+    ctx.strokeStyle='rgba(255,255,255,0.22)'; ctx.lineWidth=Math.max(1,vw*0.0015);
+    ctx.beginPath(); ctx.moveTo(nx-vw*0.012,tipY+vh*0.02); ctx.quadraticCurveTo(nx-vw*0.06,dashY,nx-vw*0.09,vh); ctx.stroke();
+    // side fairings (front wheels' pods)
+    for(const sd of [-1,1]){
+      const fx=nx+sd*vw*0.36;
+      ctx.fillStyle=_rgba(base,0.92);
+      ctx.beginPath();
+      ctx.moveTo(fx-sd*vw*0.03,vh*0.83+bob);
+      ctx.quadraticCurveTo(fx+sd*vw*0.06,vh*0.80+bob,fx+sd*vw*0.16,vh*0.86+bob);
+      ctx.lineTo(fx+sd*vw*0.18,vh); ctx.lineTo(fx-sd*vw*0.06,vh);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle=_rgba(acc,0.55);
+      ctx.fillRect(Math.min(fx,fx+sd*vw*0.10),vh*0.85+bob,vw*0.10,Math.max(2,vh*0.004));
+    }
+    // dash lip
+    ctx.fillStyle=night?'rgba(8,8,16,0.94)':'rgba(18,17,32,0.92)';
     ctx.beginPath();
-    ctx.moveTo(vw,vh*0.10); ctx.lineTo(vw*0.86,vh*0.34);
-    ctx.lineTo(vw*0.90,dashY); ctx.lineTo(vw,dashY);
-    ctx.closePath(); ctx.fill();
-    // Dashboard: a swept shell rising toward the sides.
-    ctx.fillStyle=night?'#14131f':'#22203a';
-    ctx.beginPath();
-    ctx.moveTo(0,dashY);
-    ctx.quadraticCurveTo(vw*0.5,dashY+vh*0.10,vw,dashY);
-    ctx.lineTo(vw,vh); ctx.lineTo(0,vh);
-    ctx.closePath(); ctx.fill();
-    // Lit edge along the dash lip, in the track's own rail colour so the
-    // cockpit picks up the course palette instead of looking bolted on.
-    const lipG=ctx.createLinearGradient(0,dashY-2,0,dashY+vh*0.03);
-    lipG.addColorStop(0,_rgba(theme.railR||'#66ddff',0.85));
-    lipG.addColorStop(1,_rgba(theme.railR||'#66ddff',0));
-    ctx.fillStyle=lipG;
-    ctx.beginPath();
-    ctx.moveTo(0,dashY);
-    ctx.quadraticCurveTo(vw*0.5,dashY+vh*0.10,vw,dashY);
-    ctx.lineTo(vw,dashY+vh*0.04);
-    ctx.quadraticCurveTo(vw*0.5,dashY+vh*0.14,0,dashY+vh*0.04);
-    ctx.closePath(); ctx.fill();
-    // Steering yoke — moves with steering input so the view feels driven.
-    const yx=vw*0.5-lean*vw*0.05, yy=vh*0.90, yw=vw*0.20, yh=vh*0.05;
-    ctx.strokeStyle=night?'#3a3856':'#4e4a70';
-    ctx.lineWidth=Math.max(4,vh*0.016);
-    ctx.beginPath();
-    ctx.moveTo(yx-yw,yy); ctx.quadraticCurveTo(yx,yy-yh,yx+yw,yy);
-    ctx.stroke();
-    // Energy strip repeated on the dash, so the player can read shield
-    // without looking away from the road.
+    ctx.moveTo(0,vh); ctx.lineTo(0,dashY+vh*0.05);
+    ctx.quadraticCurveTo(vw*0.5,dashY-vh*0.01,vw,dashY+vh*0.05);
+    ctx.lineTo(vw,vh); ctx.closePath(); ctx.fill();
+    // readouts
+    const kmh=~~(P.speed/MAX_SPEED*KMH_SCALE);
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font='bold '+Math.round(vh*0.040)+'px monospace';
+    ctx.fillStyle=sp>1.02?'#ffcf4d':'#e8f6ff';
+    ctx.fillText(kmh+'',nx,dashY+vh*0.075);
+    ctx.font='bold '+Math.round(vh*0.014)+'px monospace';
+    ctx.fillStyle='rgba(200,220,255,0.7)';
+    ctx.fillText('KM/H',nx,dashY+vh*0.108);
     const pw=clamp((P.power||0)/(P.powerCap||100),0,1);
     ctx.fillStyle='rgba(255,255,255,0.10)';
-    ctx.fillRect(vw*0.34,dashY+vh*0.075,vw*0.32,vh*0.014);
+    ctx.fillRect(vw*0.18,dashY+vh*0.07,vw*0.20,vh*0.012);
     ctx.fillStyle=pw>0.5?'#4dffa1':(pw>0.22?'#ffd24d':'#ff5566');
-    ctx.fillRect(vw*0.34,dashY+vh*0.075,vw*0.32*pw,vh*0.014);
+    ctx.fillRect(vw*0.18,dashY+vh*0.07,vw*0.20*pw,vh*0.012);
+    const tc=P.turboCharges||0;
+    for(let k=0;k<Math.max(tc,3);k++){
+      ctx.fillStyle=k<tc?'#6ae3ff':'rgba(255,255,255,0.12)';
+      ctx.fillRect(vw*0.62+k*vw*0.035,dashY+vh*0.066,vw*0.028,vh*0.02);
+    }
     ctx.restore();
   }
+  if(!race.attract||P._strike||dm._bumpCard){ try{ drawBumpFX(vw,vh); }catch(e){} }
 // ═══ (11) SIGNATURE EFFECTS LAYER  player just did, but must never obscure the road or the next corner.
   drawRasterFX(vw,vh);
   drawSignatureFX(vw,vh);
@@ -21054,16 +21375,18 @@ function srOpen(){
       else if(t2>=held[k]){fn();moved=true;held[k]=t2+RR;}}else held[k]=0;};
 
     const _rowN=srEditRows().length;
-    /* LB / RB = fast adjust: 6x the step and a much shorter repeat delay
-       than the d-pad, for sweeping a value across its range quickly. */
-    const LB=B_(4), RB=B_(5);
-    if(srEdit&&(LB||RB)){
+    /* LT / RT = fast adjust (6x the step, short repeat); LB / RB = tabs. */
+    const LB=B_(4), RB=B_(5), LT=B_(6), RT=B_(7);
+    if(srEdit&&(LT||RT)){
       if(t2>=(held.FAST||0)){
-        for(let q=0;q<6;q++)srEditAdjust(LB?-1:1);
+        for(let q=0;q<6;q++)srEditAdjust(LT?-1:1);
         moved=true;
         held.FAST=t2+55;
       }
     } else held.FAST=0;
+    if(srEdit&&LB&&!prev.LB){ srTab=(srTab+SR_TABS.length-1)%SR_TABS.length; srEditRow=0; moved=true; }
+    if(srEdit&&RB&&!prev.RB){ srTab=(srTab+1)%SR_TABS.length; srEditRow=0; moved=true; }
+    if(srEdit&&Y&&!prev.Y){ srShuffleTab(); moved=true; }
     if(srEdit){
       dir(U,'U',()=>{srEditRow=(srEditRow+_rowN-1)%_rowN;});
       dir(D,'D',()=>{srEditRow=(srEditRow+1)%_rowN;});
@@ -21105,7 +21428,7 @@ function srOpen(){
         try{ if(window.ZS_rearmDemo)window.ZS_rearmDemo(); }catch(e){}
       }
     }
-    prev={L,R,U,D,A,B:Bb,X,Y};
+    prev={L,R,U,D,A,B:Bb,X,Y,LB,RB};
   }
   _srRAF=requestAnimationFrame(_srPoll);
   ov._srStopPoll=function(){ if(_srRAF)cancelAnimationFrame(_srRAF); _srRAF=null; };
@@ -21117,17 +21440,20 @@ function srOpen(){
     const _rn=srEditRows().length;
     switch(e.code){
       case 'KeyX': if(srFocus===0){srEdit=!srEdit;srEditRow=0;} break;
+      case 'KeyQ': if(srEdit){srTab=(srTab+SR_TABS.length-1)%SR_TABS.length;srEditRow=0;} break;
+      case 'KeyE': if(srEdit){srTab=(srTab+1)%SR_TABS.length;srEditRow=0;} break;
+      case 'KeyR': if(srEdit)srShuffleTab(); break;
       case 'ArrowUp': case 'KeyW':
         if(srEdit)srEditRow=(srEditRow+_rn-1)%_rn; else srFocus=0; break;
       case 'ArrowDown': case 'KeyS':
         if(srEdit)srEditRow=(srEditRow+1)%_rn; else srFocus=1; break;
       case 'ArrowLeft': case 'KeyA':
-        if(srEdit)srEditAdjust(-1);
+        if(srEdit){ for(let q=0;q<(e.shiftKey?6:1);q++)srEditAdjust(-1); }
         else if(srFocus===0){srRandNav(-1);}
         else {srPresetIdx=(srPresetIdx+ALGO_PRESETS.length-1)%ALGO_PRESETS.length;_srPvImmediate=true;}
         break;
       case 'ArrowRight': case 'KeyD':
-        if(srEdit)srEditAdjust(1);
+        if(srEdit){ for(let q=0;q<(e.shiftKey?6:1);q++)srEditAdjust(1); }
         else if(srFocus===0){srRandNav(1);}
         else {srPresetIdx=(srPresetIdx+1)%ALGO_PRESETS.length;_srPvImmediate=true;}
         break;
@@ -21289,7 +21615,7 @@ function srWaterTick(){
   }catch(e){}
   srWaterRAF=requestAnimationFrame(srWaterTick);
 }
-let srEdit=false, srEditRow=0, srOverrides=null;
+let srEdit=false, srEditRow=0, srOverrides=null, srTab=0;
 let srBiome=0, srWeather=0;
 
 const SR_BIOMES=['auto'].concat(BIOME_LIST);   // 'auto' + all 20 biomes
@@ -21315,10 +21641,6 @@ const SR_EXTRA=[
   {k:'_fogDensity',   label:'Fog',        min:0, max:2, step:0.05},
 ];
 
-/* Strip internal prefixes for display. */
-function srLabel(k){
-  return k.replace(/^_feat_/,'').replace(/^_/,'');
-}
 
 /* Build a full parameter set for a seed (random tile) or preset index. */
 function srBuildParams(mode){
@@ -21352,102 +21674,153 @@ function srBuildParams(mode){
   return o;
 }
 
-/* All editable rows in the RANDOM tile: parameters + the extra controls. */
+/* ═══ SUPER RACING EDITOR, REDESIGNED (request 3 item 6)
+   The random tile used to show ~100 parameters at once in three scrolling
+   columns of 10px text, with world options in a side strip and many track
+   types unreachable. Now:
+     BROWSE  a large preview beside a "track DNA" card — six headline dials,
+             the world (biome, weather, palette, surface, time), the race
+             (length, laps, rivals) and the track's strongest features;
+     EDIT    eight tabs (LB/RB): QUICK macro dials that move whole groups of
+             parameters, WORLD, SHAPE, PACING, FEATURES (every track type the
+             generator can place, as count chips, 0 = never), ENGINE,
+             LOOK & FX and RULES. LT/RT adjust fast, Y shuffles the tab. */
 const SR_COL_ORDER=[['Geometry','Track Shape','Pacing'],['Features','Safety','Engine'],
                     ['Visuals','Effects','Mechanics']];
-function srEditRows(){
-  const rows=[];
-  for(let ci=0;ci<SR_COL_ORDER.length;ci++)
-    for(let si=0;si<SR_COL_ORDER[ci].length;si++){
-      const sec=SR_COL_ORDER[ci][si];
-      for(let i=0;i<ALGO_PARAMS.length;i++)
-        if(ALGO_PARAMS[i].sec===sec)rows.push(ALGO_PARAMS[i]);
-    }
-  for(let i=0;i<SR_EXTRA.length;i++)rows.push(SR_EXTRA[i]);
-  return rows;
+/* ALGO_PARAMS is declared further down, so everything that reads it is
+   resolved lazily on first use (a top-level read would hit its TDZ). */
+let _SR_PC=null;
+const _srPmap=()=>{ if(!_SR_PC){ _SR_PC={}; for(const p of ALGO_PARAMS)_SR_PC[p.k]=p; } return _SR_PC; };
+const _SR_P=new Proxy({},{get:(o,k)=>_srPmap()[k]});
+const _srHas=(k)=>!!_srPmap()[k];
+const SR_MACROS=[
+  {k:'~curves',   label:'CURVES',    col:'#7fd0ff', t:['curveBias','curveVariance','chicaneDensity','_hairpinCurve']},
+  {k:'~hills',    label:'HILLS',     col:'#a6ffc8', t:['elevBias','elevFrequency','_extremeElevOdds']},
+  {k:'~speed',    label:'SPEED',     col:'#ffd23a', t:['boostDensity','arrowDensity','rushAppetite','straightBias']},
+  {k:'~chaos',    label:'CHAOS',     col:'#ff7ad0', t:['_absurdOdds','_setPieceOdds','_squeezeOdds','_forkOdds','_xOdds']},
+  {k:'~spectacle',label:'SPECTACLE', col:'#c0a0ff', t:['_spectacleOdds','_infernoOdds','_skyHighwayOdds','_bankOdds','_surfaceOdds']},
+  {k:'~danger',   label:'DANGER',    col:'#ff8a6a', t:['hazardDensity','riskReward','_collapseOdds','technicality']}
+].map(m=>Object.assign(m,{kind:'macro'}));
+let _srMacroReady=false;
+function _srMacros(){ if(!_srMacroReady){ _srMacroReady=true; for(const m of SR_MACROS)m.t=m.t.filter(_srHas); } return SR_MACROS; }
+const SR_TIME=['auto','night'];
+const SR_PALETTES=['auto'].concat(TRACK_THEMES.map(t=>t.name));
+const SR_SURF=['auto'].concat(Object.keys(SURFACES));
+const SR_SNOW=['auto','light','normal','heavy','whiteout'];
+const SR_WORLD=[
+  {k:'__biome',   label:'BIOME',   kind:'list', list:SR_BIOMES, get:()=>srBiome, set:(i)=>{srBiome=i;}},
+  {k:'__weather', label:'WEATHER', kind:'list', list:SR_WEATHER, get:()=>srWeather, set:(i)=>{srWeather=i;}},
+  {k:'_forceNight',label:'TIME',   kind:'list', list:SR_TIME, ov:(n)=>n==='night'?1:null},
+  {k:'_forceTheme',label:'PALETTE',kind:'list', list:SR_PALETTES},
+  {k:'_forceSurface',label:'SURFACE',kind:'list', list:SR_SURF},
+  {k:'_snowClass', label:'SNOW',   kind:'list', list:SR_SNOW},
+  {k:'_stormForce',label:'STORM',  min:0,max:1,step:0.05, def:0},
+  {k:'_fogDensity',label:'FOG',    min:0,max:2,step:0.05},
+  {k:'vegetationMix',label:'VEGETATION',min:0,max:3,step:0.05},
+  {k:'propDensity',label:'BUILDINGS',min:0,max:10,step:0.05},
+  {k:'skylineScale',label:'SKYLINE',min:0,max:3,step:0.05},
+  {k:'_rollClamp', label:'CAMERA ROLL',min:0,max:1.2,step:0.05, def:0.55}
+];
+const SR_RACE=['_trackLength','_lapsOverride','_rivalCount'];
+const _SR_TAKEN=new Set(SR_RACE.concat(['_fogDensity','vegetationMix','propDensity','skylineScale']));
+const _srSec=(secs,feat)=>ALGO_PARAMS.filter(p=>secs.indexOf(p.sec)>=0&&(feat==null||(p.k.indexOf('_feat_')===0)===feat)&&!_SR_TAKEN.has(p.k));
+const SR_TABS=[
+  {name:'QUICK',     col:'#39ff14', rows:()=>_srMacros().concat(SR_RACE.filter(_srHas).map(k=>_SR_P[k]))},
+  {name:'WORLD',     col:'#ffd23a', rows:()=>SR_WORLD},
+  {name:'SHAPE',     col:'#7fd0ff', rows:()=>_srSec(['Geometry','Track Shape'],false)},
+  {name:'PACING',    col:'#ffb13d', rows:()=>_srSec(['Pacing'],null)},
+  {name:'FEATURES',  col:'#a6ffc8', rows:()=>ALGO_PARAMS.filter(p=>p.k.indexOf('_feat_')===0), chips:true},
+  {name:'ENGINE',    col:'#6af0ff', rows:()=>_srSec(['Engine'],false)},
+  {name:'LOOK & FX', col:'#ff9ad0', rows:()=>_srSec(['Visuals','Effects'],null)},
+  {name:'RULES',     col:'#c0a0ff', rows:()=>_srSec(['Mechanics','Safety'],null)}
+];
+function srEditRows(){ return SR_TABS[srTab%SR_TABS.length].rows(); }
+const _SR_NAMES={_trackLength:'LENGTH',_lapsOverride:'LAPS',_rivalCount:'RIVALS'};
+function srLabel(k){
+  if(_SR_NAMES[k])return _SR_NAMES[k];
+  return k.replace(/^_feat_/,'').replace(/^_/,'').replace(/Odds$/,'').replace(/([a-z])([A-Z])/g,'$1 $2').toUpperCase();
 }
+function _srNorm(p,v){ return Math.max(0,Math.min(1,(v-p.min)/Math.max(1e-4,p.max-p.min))); }
+function _srMacroVal(m,vals){ let a=0,n=0; for(const k of m.t){ const p=_SR_P[k]; if(!p||vals[k]==null)continue; a+=_srNorm(p,vals[k]); n++; } return n?a/n:0; }
+function _srListIdx(r){ if(r.get)return r.get(); const v=srOverrides&&srOverrides[r.k];
+  if(v==null)return 0; if(r.k==='_forceNight')return v?1:0; const i=r.list.indexOf(v); return i<0?0:i; }
 
 function srRenderTiles(){
-  /* Column order requested: Geometry / Pacing / Safety stacked in col 1,
-     Features in col 2, Visuals / Effects / Mechanics stacked in col 3. */
-  const COLS=SR_COL_ORDER;
   const secCol={Geometry:'#7fd0ff','Track Shape':'#9ae6ff',Pacing:'#ffd23a',Engine:'#6af0ff',
-    Features:'#a6ffc8',Visuals:'#ff9ad0',Safety:'#ff8a6a',Effects:'#c0a0ff',
-    Mechanics:'#8fe8b0'};
+    Features:'#a6ffc8',Visuals:'#ff9ad0',Safety:'#ff8a6a',Effects:'#c0a0ff',Mechanics:'#8fe8b0'};
+  const esc=(t)=>String(t).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  const bar=(pct,col)=>'<span class="sr2-bar"><i style="width:'+Math.max(4,pct*100).toFixed(0)+'%;background:'+col+'"></i></span>';
 
-  function paramsHTML(vals,editable){
-    const rows=editable?srEditRows():null;
-    let h='<div class="sr-cols">';
-    for(let ci=0;ci<COLS.length;ci++){
-      h+='<div class="sr-col">';
-      for(let si=0;si<COLS[ci].length;si++){
-        const sec=COLS[ci][si];
-        const list=ALGO_PARAMS.filter(p=>p.sec===sec);
-        if(!list.length)continue;
-        h+='<div class="sr-psec"><div class="sr-psec-t" style="color:'+
-           (secCol[sec]||'#8fd6ff')+'">'+sec.toUpperCase()+'</div>';
-        for(let ri=0;ri<list.length;ri++){
-          const p=list[ri];
-          const v=vals[p.k];
-          if(v==null)continue;
-          const pct=Math.max(0,Math.min(1,(v-p.min)/Math.max(0.0001,p.max-p.min)));
-          /* Floor the bar at 6% so a parameter sitting at its minimum still shows a visible stub — a 0%-wide bar rendered as nothing at all, which is why bridge  */
-          const barPct=Math.max(6,pct*100);
-          const isSel=editable&&srEdit&&rows[srEditRow]&&rows[srEditRow].k===p.k;
-          h+='<div class="sr-prow'+(isSel?' sr-sel':'')+'">'+
-             '<span class="sr-pk">'+srLabel(p.k)+'</span>'+
-             '<span class="sr-pbar"><i style="width:'+barPct.toFixed(0)+'%;'+
-             'background:'+(secCol[sec]||'#8fd6ff')+'"></i></span>'+
-             '<span class="sr-pv">'+(+v).toFixed(2)+'</span></div>';
-        }
-        h+='</div>';
-      }
-      h+='</div>';
+  /* BROWSE: the track's DNA at a glance */
+  function dialsHTML(vals){
+    let h='<div class="sr2-dials">';
+    for(const m of _srMacros()){ const v=_srMacroVal(m,vals);
+      h+='<div class="sr2-dial"><span class="sr2-dk" style="color:'+m.col+'">'+m.label+'</span>'+bar(v,m.col)+
+         '<span class="sr2-dv">'+Math.round(v*100)+'</span></div>'; }
+    return h+'</div>';
+  }
+  function dnaHTML(vals,preset){
+    let h='<div class="sr2-dna">';
+    h+=dialsHTML(vals);
+    const bn=vals._forceBiome||'auto';
+    const wx=vals._snowOdds>=1?'snow':vals._rainOdds>=1?'rain':vals._sandOdds>=1?'sand':vals._fogOdds>=1?'fog':'clear';
+    const ov=vals;
+    const chip=(t,c)=>'<span class="sr2-chip" style="border-color:'+c+';color:'+c+'">'+esc(t)+'</span>';
+    h+='<div class="sr2-sub">WORLD</div><div class="sr2-chips">'+
+       chip('BIOME '+bn.toUpperCase(),SR_BIOME_COL[bn]||'#8fd6ff')+chip(wx.toUpperCase(),SR_WEATHER_COL[wx]||'#8fd6ff')+
+       chip(ov._forceNight?'NIGHT':'TIME AUTO','#c0a0ff')+
+       (ov._forceTheme?chip(ov._forceTheme.toUpperCase(),'#ff9ad0'):'')+
+       (ov._forceSurface?chip(ov._forceSurface.toUpperCase()+' SURFACE','#6af0ff'):'')+'</div>';
+    const L=Math.round(vals._trackLength||3), Lp=Math.round(vals._lapsOverride||3), Rv=Math.min(7,Math.round(vals._rivalCount||3));
+    h+='<div class="sr2-sub">RACE</div><div class="sr2-chips">'+chip('LENGTH '+L,'#ffd23a')+chip(Lp+' LAPS','#ffd23a')+chip(Rv+' RIVALS','#ffd23a')+'</div>';
+    const feats=ALGO_PARAMS.filter(p=>p.k.indexOf('_feat_')===0&&vals[p.k]>=1)
+      .map(p=>({k:p.k,v:_srNorm(p,vals[p.k])})).sort((a,b)=>b.v-a.v).slice(0,preset?6:10);
+    h+='<div class="sr2-sub">SIGNATURE FEATURES</div><div class="sr2-chips">'+
+       (feats.length?feats.map(f=>chip(srLabel(f.k),'#a6ffc8')).join(''):chip('NONE','#5a7a8a'))+'</div>';
+    return h+'</div>';
+  }
+  /* Under the preview: where this track sits in the browse history and how
+     well it fits the player's taste (browse), or the live DNA (lab). */
+  function underHTML(vals){
+    let h='<div class="sr2-under">';
+    if(srEdit){
+      h+='<div class="sr2-sub">LIVE TRACK DNA</div>'+dialsHTML(vals);
+      const n=srOverrides?Object.keys(srOverrides).length:0;
+      h+='<div class="sr2-seed">'+(n?n+' SETTING'+(n>1?'S':'')+' CHANGED':'NO CHANGES YET')+'</div>';
+    } else {
+      const N=(srRandHistory&&srRandHistory.length)||1, I=(srRandHistIdx|0)+1;
+      h+='<div class="sr2-seed">TRACK '+I+' OF '+N+' THIS SESSION &nbsp;·&nbsp; SEED '+(srRandSeed>>>0)+'</div>';
+      try{ const _M=_pmModel(); if(_M.conf){ const _f=seedFit(srRandSeed>>>0,vals);
+        h+='<div class="sr2-fit"><span>YOUR TASTE</span>'+bar(_f,_f>=0.6?'#a6ffc8':_f<=0.4?'#ff8a6a':'#ffd23a')+'<b>'+Math.round(_f*100)+'%</b></div>'; } }catch(e){}
+      h+='<div class="sr2-tip">◀ PREVIOUS TRACK &nbsp;·&nbsp; NEXT TRACK ▶ &nbsp;·&nbsp; X TO TUNE IT</div>';
     }
     return h+'</div>';
   }
 
-  /* Right-hand extras column — only on the RANDOM tile */
-  function extrasHTML(vals){
-    const rows=srEditRows();
-    let h='<div class="sr-extras">';
-    h+='<div class="sr-psec-t" style="color:#ffd23a">TRACK SETUP</div>';
-    h+='<div class="sr-seed">SEED '+(srRandSeed>>>0)+'</div>';
-    try{ const _M=_pmModel(); if(_M.conf){ const _f=seedFit(srRandSeed>>>0,vals);
-      h+='<div class="sr-seed" style="color:'+(_f>=0.6?'#a6ffc8':_f<=0.4?'#ff8a6a':'#ffd23a')+'">FIT '+Math.round(_f*100)+'%</div>'; } }catch(e){}
-    for(let i=0;i<SR_EXTRA.length;i++){
-      const e=SR_EXTRA[i];
-      const isSel=srEdit&&rows[srEditRow]&&rows[srEditRow].k===e.k;
-      if(e.kind==='list'){
-        const idx=(e.k==='__biome')?srBiome:srWeather;
-        const name=e.list[idx];
-        const col=(e.k==='__biome')?SR_BIOME_COL[name]:SR_WEATHER_COL[name];
-        h+='<div class="sr-erow'+(isSel?' sr-sel':'')+'">'+
-           '<span class="sr-ek">'+e.label+'</span>'+
-           '<span class="sr-swatch" style="background:'+col+'"></span>'+
-           '<span class="sr-ev">'+name.toUpperCase()+'</span></div>';
-      } else {
-        const v=vals[e.k]!=null?vals[e.k]:0;
-        const pct=Math.max(0,Math.min(1,(v-e.min)/Math.max(0.0001,e.max-e.min)));
-        const ebar=Math.max(6,pct*100);
-        h+='<div class="sr-erow'+(isSel?' sr-sel':'')+'">'+
-           '<span class="sr-ek">'+e.label+'</span>'+
-           '<span class="sr-pbar"><i style="width:'+ebar.toFixed(0)+'%;'+
-           'background:#ffd23a"></i></span>'+
-           '<span class="sr-ev">'+(+v).toFixed(2)+'</span></div>';
-      }
-    }
-    /* Visual preview square — shows the biome's sky/floor/veg palette */
-    const _bn=SR_BIOMES[srBiome];
-    const _bd=(_bn!=='auto'&&BIOME_DEFS[_bn])?BIOME_DEFS[_bn]:null;
-    h+='<div class="sr-visbox" id="_sr_visbox">'+
-       '<div class="sr-vis-t">VISUALS</div>'+
-       '<canvas id="_sr_vis" width="120" height="80"></canvas>'+
-       '<div class="sr-vis-name">'+_bn.toUpperCase()+'</div>'+
-       '</div>';
-    h+='<div class="sr-editnote">'+(srEdit
-      ?'\u25b2\u25bc ROW \u00b7 \u25c0\u25b6 VALUE \u00b7 X EXIT'
-      :'X = EDIT MODE')+'</div>';
+  /* EDIT: tab strip + the tab's rows */
+  function editHTML(vals){
+    const T=SR_TABS[srTab%SR_TABS.length], rows=T.rows();
+    if(srEditRow>=rows.length)srEditRow=Math.max(0,rows.length-1);
+    let h='<div class="sr2-edit"><div class="sr2-tabs">';
+    SR_TABS.forEach((t,i)=>{ h+='<span class="sr2-tab'+(i===srTab?' on':'')+'" style="'+(i===srTab?'background:'+t.col+';color:#041008':'color:'+t.col)+'">'+t.name+'</span>'; });
+    h+='</div><div class="sr2-grid'+(T.chips?' chips':'')+'" style="--rows:'+Math.ceil(rows.length/(T.chips?3:2))+'">';
+    rows.forEach((r,i)=>{
+      const sel=i===srEditRow;
+      let val='', pct=0, col=T.col, extra='';
+      if(r.kind==='macro'){ pct=_srMacroVal(r,vals); val=Math.round(pct*100)+''; col=r.col; extra=' sr2-macro'; }
+      else if(r.kind==='list'){ const li=_srListIdx(r), nm=r.list[li]; val=String(nm).toUpperCase(); pct=r.list.length>1?li/(r.list.length-1):0;
+        if(r.k==='__biome')col=SR_BIOME_COL[nm]||col; if(r.k==='__weather')col=SR_WEATHER_COL[nm]||col; }
+      else { const has=vals[r.k]!=null; const v=has?+vals[r.k]:(r.def!=null?r.def:r.min);
+        pct=_srNorm(r,v); val=(!has&&r.def!=null&&!(srOverrides&&r.k in srOverrides))?'AUTO':((r.step>=1)?String(Math.round(v)):v.toFixed(2));
+        if(T.chips){ const n=Math.round(v); extra=n<=0?' off':''; val=n<=0?'OFF':('×'+n); }
+        else if(r.sec)col=secCol[r.sec]||col; }
+      h+='<div class="sr2-row'+extra+(sel?' sel':'')+'"'+(r.desc?' title="'+esc(r.desc)+'"':'')+'>'+
+         '<span class="sr2-k">'+esc(r.label||srLabel(r.k))+'</span>'+(T.chips?'':bar(pct,col))+
+         '<span class="sr2-v">'+esc(val)+'</span></div>';
+    });
+    h+='</div>';
+    const cur=rows[srEditRow];
+    h+='<div class="sr2-desc">'+esc(cur?(cur.desc||(cur.kind==='macro'?'Moves '+cur.t.map(srLabel).join(', ')+' together':cur.kind==='list'?'◀▶ to choose':'')):'')+'</div>';
     return h+'</div>';
   }
 
@@ -21456,16 +21829,14 @@ function srRenderTiles(){
   if(rEl){
     rEl.className='sr-bigtile'+(srFocus===0?' sr-focus':'')+(srEdit?' sr-editing':'');
     rEl.innerHTML='<div class="sr-tile-head">'+
-      '<span class="sr-tile-label">'+(srEdit?'EDIT MODE':'RANDOM TRACK')+'</span>'+
-      '<span class="sr-tile-num">'+(srEdit?'X = EXIT':'')+'</span></div>'+
+      '<span class="sr-tile-label">'+(srEdit?'TRACK LAB':'RANDOM TRACK')+'</span>'+
+      '<span class="sr-tile-num">'+(srEdit?'LB/RB TAB · LT/RT FAST · Y SHUFFLE · X DONE':'◀▶ BROWSE · X OPEN TRACK LAB')+'</span></div>'+
       '<div class="sr-tile-body">'+
-        '<canvas class="sr-prev" id="_sr_prev_r" width="240" height="180"></canvas>'+
-        paramsHTML(rv,true)+
-        extrasHTML(rv)+
+        '<div class="sr2-left"><canvas class="sr-prev" id="_sr_prev_r" width="240" height="180"></canvas>'+underHTML(rv)+'</div>'+
+        (srEdit?editHTML(rv):dnaHTML(rv,false))+
       '</div>';
     _srCachedVals[0]=rv;   // cache for launch parity
     srQueuePreview('_sr_prev_r',srRandSeed>>>0,rv);
-    srDrawVisBox(rv);
   }
 
   const pr=ALGO_PRESETS[srPresetIdx]||{name:'?',desc:'',col:'#888'};
@@ -21481,31 +21852,53 @@ function srRenderTiles(){
       '<div class="sr-preset-desc">'+(pr.desc||'')+'</div>'+
       '<div class="sr-tile-body sr-preset-body">'+
         '<canvas class="sr-prev" id="_sr_prev_p" width="240" height="180"></canvas>'+
-      '</div>';   // side-by-side layout: title, description and preview only
+        dnaHTML(pv,true)+
+      '</div>';
     srQueuePreview('_sr_prev_p',(srPresetIdx*2654435761+7919)>>>0,pv);
   }
 
   const hEl=document.getElementById('_sr_hint');
   if(hEl)hEl.innerHTML=srEdit
-    ?'\u25b2\u25bc ROW &nbsp;\u00b7&nbsp; \u25c0\u25b6 VALUE &nbsp;\u00b7&nbsp; X EXIT EDIT &nbsp;\u00b7&nbsp; A RACE'
-    :'\u25b2\u25bc SELECT TILE &nbsp;\u00b7&nbsp; \u25c0\u25b6 CHANGE &nbsp;\u00b7&nbsp; X EDIT &nbsp;\u00b7&nbsp; A RACE &nbsp;\u00b7&nbsp; B CLOSE';
-  /* Keep the selected edit row visible now that columns scroll. */
-  try{ const _sel=document.querySelector('#_sr_rand .sr-sel'); if(_sel&&_sel.scrollIntoView)_sel.scrollIntoView({block:'nearest'}); }catch(e){}
+    ?'▲▼ SETTING &nbsp;·&nbsp; ◀▶ VALUE &nbsp;·&nbsp; LB RB TAB &nbsp;·&nbsp; LT RT FAST &nbsp;·&nbsp; Y SHUFFLE TAB &nbsp;·&nbsp; X DONE &nbsp;·&nbsp; A RACE'
+    :'▲▼ SELECT TILE &nbsp;·&nbsp; ◀▶ CHANGE &nbsp;·&nbsp; X TRACK LAB &nbsp;·&nbsp; A RACE &nbsp;·&nbsp; B CLOSE';
+  try{ const _sel=document.querySelector('#_sr_rand .sr2-row.sel'); if(_sel&&_sel.scrollIntoView)_sel.scrollIntoView({block:'nearest'}); }catch(e){}
 }
 
-/* Adjust the currently selected edit row by dir (-1 or +1). */
+/* Adjust the selected row of the current tab by dir (-1 or +1). */
 function srEditAdjust(dir){
   const rows=srEditRows();
   const r=rows[srEditRow];
   if(!r)return;
-  if(r.k==='__biome'){srBiome=(srBiome+dir+SR_BIOMES.length)%SR_BIOMES.length;return;}
-  if(r.k==='__weather'){srWeather=(srWeather+dir+SR_WEATHER.length)%SR_WEATHER.length;return;}
   if(!srOverrides)srOverrides={};
-  const cur=srBuildParams(0)[r.k];
+  if(r.kind==='list'){
+    const n=r.list.length, i=((_srListIdx(r)+dir)%n+n)%n;
+    if(r.set){ r.set(i); return; }
+    const nm=r.list[i];
+    if(i===0)delete srOverrides[r.k];
+    else srOverrides[r.k]=r.ov?r.ov(nm):nm;
+    if(srOverrides[r.k]==null)delete srOverrides[r.k];
+    return;
+  }
+  const cur=srBuildParams(0);
+  if(r.kind==='macro'){
+    for(const k of r.t){ const p=_SR_P[k]; if(!p)continue;
+      const v=cur[k]!=null?cur[k]:p.min, st=(p.max-p.min)*0.05;
+      srOverrides[k]=+Math.max(p.min,Math.min(p.max,v+dir*st)).toFixed(3); }
+    return;
+  }
   const step=r.step||((r.max-r.min)/40);
-  let nv=(cur!=null?cur:r.min)+dir*step;
-  nv=Math.max(r.min,Math.min(r.max,nv));
-  srOverrides[r.k]=+nv.toFixed(3);
+  const base=(cur[r.k]!=null)?cur[r.k]:(r.def!=null?r.def:r.min);
+  srOverrides[r.k]=+Math.max(r.min,Math.min(r.max,base+dir*step)).toFixed(3);
+}
+/* Y: shuffle every setting on the current tab — the fun "surprise me". */
+function srShuffleTab(){
+  if(!srOverrides)srOverrides={};
+  for(const r of srEditRows()){
+    if(r.kind==='macro'){ for(const k of r.t){ const p=_SR_P[k]; if(p)srOverrides[k]=+(p.min+Math.random()*(p.max-p.min)).toFixed(3); } }
+    else if(r.kind==='list'){ const i=~~(Math.random()*r.list.length);
+      if(r.set)r.set(i); else { if(i===0)delete srOverrides[r.k]; else { const nm=r.list[i]; srOverrides[r.k]=r.ov?r.ov(nm):nm; if(srOverrides[r.k]==null)delete srOverrides[r.k]; } } }
+    else { const st=r.step||0.01; srOverrides[r.k]=+(r.min+Math.round(Math.random()*(r.max-r.min)/st)*st).toFixed(3); }
+  }
 }
 /* buildTrack() is expensive (thousands of segments), so previews are debounced: a rapid run of d-pad presses only triggers one rebuild once the input  */
 const _srPvTimers={}, _srPvKey={}, _srPvDone={}, _srPvImg={};
@@ -22209,6 +22602,7 @@ window.DriveMode={start,exit,get active(){return dm.active;},
       let eco=0; for(let i=0;i<N;i++)if(segments[i]._eco&&segments[i]._eco!==theme.biome)eco++;
       o.ecotonePct=+(eco/N*100).toFixed(1);
       let bk=0,sf=0,vd=0; for(let i=0;i<N;i++){ const g=segments[i]; if(g.bank&&Math.abs(g.bank)>0.2)bk++; if(g.surf)sf++; if(g.voidDeck)vd++; }
+      o.gen2=Object.assign({},dm._gen2||{});
       o.bankPct=+(bk/N*100).toFixed(1); o.surfPct=+(sf/N*100).toFixed(1); o.skyPct=+(vd/N*100).toFixed(1);
       o.trees=trees; o.buildings=blds; o.landforms=land; o.env=(segments._env&&segments._env.k.length)||0;
       o.formsPerWindow=+(forms/Math.max(1,wins)).toFixed(2);
@@ -22241,7 +22635,7 @@ window.DriveMode={start,exit,get active(){return dm.active;},
     dm._dbgView=v?{az:v.az||0,zoom:v.zoom||1,lift:v.lift||0,
                    pitch:v.pitch||0,roll:v.roll||0,
                    rollRate:v.rollRate||0,
-                   ztrav:v.ztrav||0,xoff:v.xoff||0}:null;
+                   ztrav:v.ztrav||0,xoff:v.xoff||0,fpv:!!v.fpv}:null;
   }catch(e){}},
   toast:(t)=>{try{showMsg(t);}catch(e){}},
   notify:(msg,ok)=>{try{showToast(msg,ok!==false);}catch(e){try{showMsg(msg);}catch(e2){}}},
@@ -22707,6 +23101,26 @@ const ALGO_PARAMS=[
   {k:'_feat_narrows',    sec:'Features', min:0,max:7.5, step:1, desc:'Narrow squeeze sections per track', def:3.0},
   {k:'_feat_bottleneck', sec:'Features', min:0,max:10, step:1, desc:'Bottleneck sections per track', def:4.0},
   {k:'_feat_multideck',  sec:'Features', min:0,max:5, step:1, desc:'Multi-deck highway sections per track', def:2.0},
+  /* ═══ FEATURE KINDS THE GENERATOR HAD BUT THE MENU NEVER EXPOSED
+     (request 3 item 6). Every kind below is in _FEAT_META and placed by the
+     director; now each has its own count, 0 = never. */
+  {k:'_feat_skyramp',      sec:'Features', min:0,max:5, step:1, desc:'Sky-ramp launches per track', def:2},
+  {k:'_feat_gravitywell',  sec:'Features', min:0,max:5, step:1, desc:'Gravity-well dips per track', def:2},
+  {k:'_feat_sweeparc',     sec:'Features', min:0,max:8, step:1, desc:'Long sweeping arcs per track', def:4},
+  {k:'_feat_openrun',      sec:'Features', min:0,max:8, step:1, desc:'Wide open speed runs per track', def:3},
+  {k:'_feat_downhillblast',sec:'Features', min:0,max:6, step:1, desc:'Downhill blasts per track', def:3},
+  {k:'_feat_flowchain',    sec:'Features', min:0,max:8, step:1, desc:'Flowing curve chains per track', def:4},
+  {k:'_feat_crestsweep',   sec:'Features', min:0,max:6, step:1, desc:'Blind-crest sweepers per track', def:3},
+  {k:'_feat_esschain',     sec:'Features', min:0,max:6, step:1, desc:'Esses chains per track', def:1},
+  {k:'_feat_canyonrun',    sec:'Features', min:0,max:5, step:1, desc:'Canyon runs per track', def:2},
+  {k:'_feat_chicanewall',  sec:'Features', min:0,max:5, step:1, desc:'Walled chicanes per track', def:2},
+  {k:'_feat_cliffdrop',    sec:'Features', min:0,max:4, step:1, desc:'ABSURD: cliff drops per track', def:2},
+  {k:'_feat_rollerwave',   sec:'Features', min:0,max:4, step:1, desc:'ABSURD: roller-coaster waves per track', def:2},
+  {k:'_feat_spiralstair',  sec:'Features', min:0,max:3, step:1, desc:'ABSURD: spiral staircases per track', def:1},
+  {k:'_feat_blindsnap',    sec:'Features', min:0,max:4, step:1, desc:'ABSURD: blind snap turns per track', def:2},
+  {k:'_feat_slingshot',    sec:'Features', min:0,max:4, step:1, desc:'ABSURD: slingshot launches per track', def:2},
+  {k:'_feat_mirrorstraight',sec:'Features',min:0,max:3, step:1, desc:'ABSURD: mirror straights per track', def:1},
+  {k:'_feat_megaelevation',sec:'Features', min:0,max:3, step:1, desc:'ABSURD: mega-elevation climbs per track', def:2},
   // ── SECTION 4: VISUALS & ATMOSPHERE
   {k:'propDensity',   sec:'Visuals',  min:0,max:10,step:0.05, desc:'Roadside prop density', def:1.5},
   {k:'vegetationMix', sec:'Visuals',  min:0.00,max:2.50,step:0.02, desc:'Plants vs buildings ratio. 0=bare city 2.5=dense forest', def:0.9},
@@ -23786,6 +24200,13 @@ window.DriveDebug={
   start:()=>start((Math.random()*1e9)|0),exit,
   openAlgoTool(){try{_algoOpenModal();}catch(e){console.error('algo tool',e);}},
   maxSpeed(){if(P)P.speed=MAX_SPEED;},
+  /* QA: park rival 0 a given number of segments ahead, for the bump harness. */
+  placeRival(segAhead,dx){ if(!P||!rivals||!rivals.length)return false; const r=rivals[0];
+    r.z=(P.z+SEG_LEN*(segAhead||40))%trackLength; r.x=clamp(P.x+(dx==null?0.35:dx),-0.9,0.9); r.speed=P.speed*0.85; r._stunUntil=0; return true; },
+  bumpPose(o){ dm._bumpPoseTest=o||null; },
+  bumpHold(ms,dir){ if(!dm._bumpZoom)dm._bumpZoom={t:0,dir:1,cut:true}; dm._bumpZoom.t=performance.now()-ms; if(dir)dm._bumpZoom.dir=dir; if(dm._bumpCard)dm._bumpCard.t=performance.now()-Math.max(ms,700); if(dm._impactFlash)dm._impactFlash.t=performance.now()-ms; },
+  bumpState(){ return {card:dm._bumpCard?Object.assign({},dm._bumpCard):null,strike:!!(P&&P._strike),slow:!!dm._slowMo,
+    charge:dm._chargeBump?{p:dm._chargeBump.progress,ch:dm._chargeBump.charged,gap:dm._chargeBump.gapSeg}:null,inRange:dm._bumpInRange|0,count:dm._bumpCount|0}; },
   turboNow(){if(P){P.turboReady=false;P.turboUntil=performance.now()+TURBO_LEN;}},
   skipToEnd(){if(P){P.lap=LAPS;P.z=trackLength-SEG_LEN*8;}},
   // Debug: grant a turbo charge (used by the diagnostic box button).
@@ -23813,7 +24234,9 @@ window.DriveDebug={
   addLap(){if(P)P.lap++;},
   showPos(){try{if(typeof window.uToast==='function')window.uToast('Pos '+hud.pos+' · lap '+P.lap+' · pow '+~~P.power,1800);}catch(e){}},
   resetRace(){buildTrack(dm.seed);resetRace();},
-  _state(){return{demo:!!dm.demo,attract:!!(race&&race.attract),paused:race&&race.paused,sel:race&&race.pauseSel,over:race&&race.over,count:race&&race.count,fromSR:dm.fromSR,opts:typeof pauseOpts==='function'?pauseOpts():null,speed:P&&~~P.speed,maxSpeed:MAX_SPEED,kmh:P&&~~(P.speed/MAX_SPEED*KMH_SCALE),power:P&&+P.power.toFixed(1),gameOver:race&&!!race.gameOver,exploding:race&&!!race.exploding,air:P&&P.airUntil>performance.now(),px:P&&+P.x.toFixed(3),vx:P&&+(P.vx||0).toFixed(3),slip:P&&+(P.slip||0).toFixed(3),cam:{scaleK:+(dm._carScaleK||0).toFixed(3),drawX:dm._carDrawX!=null?+dm._carDrawX.toFixed(2):null,rx:(P&&P._rx!=null)?+P._rx.toFixed(5):null,alpha:+(dm._alpha||0).toFixed(3),roadK:+(dm._carRoadK||0).toFixed(3),orbZ:+(dm._orbitZ||0).toFixed(1),az:+(dm._orbitAz||0).toFixed(3),zoom:+(dm._orbitZoom||0).toFixed(2),oz:+(dm._orbitZ||0).toFixed(2),ox:+(dm._orbitX||0).toFixed(2),lift:+(dm._orbitLift||0).toFixed(2),shot:dm._lastDemoShot},rivals:rivals?rivals.map(function(r){return{id:r._id,spd:~~r.speed,top:~~r.top,lap:r.lap,x:+r.x.toFixed(2),blk:+(r._blockT||0).toFixed(2)};}):[],power2:P&&+P.power.toFixed(1),P:P,seg:seg,demoClock:_demoClock};},
+  /* place/podium: World Tour decides a win from these. They were missing,
+     so every World Tour win was recorded as a loss and nothing unlocked. */
+  _state(){return{place:(race&&race.podium)?race.podium.place:null,podium:(race&&race.podium)?{place:race.podium.place}:null,demo:!!dm.demo,attract:!!(race&&race.attract),paused:race&&race.paused,sel:race&&race.pauseSel,over:race&&race.over,count:race&&race.count,fromSR:dm.fromSR,opts:typeof pauseOpts==='function'?pauseOpts():null,speed:P&&~~P.speed,maxSpeed:MAX_SPEED,kmh:P&&~~(P.speed/MAX_SPEED*KMH_SCALE),power:P&&+P.power.toFixed(1),gameOver:race&&!!race.gameOver,exploding:race&&!!race.exploding,air:P&&P.airUntil>performance.now(),px:P&&+P.x.toFixed(3),vx:P&&+(P.vx||0).toFixed(3),slip:P&&+(P.slip||0).toFixed(3),cam:{scaleK:+(dm._carScaleK||0).toFixed(3),drawX:dm._carDrawX!=null?+dm._carDrawX.toFixed(2):null,rx:(P&&P._rx!=null)?+P._rx.toFixed(5):null,alpha:+(dm._alpha||0).toFixed(3),roadK:+(dm._carRoadK||0).toFixed(3),orbZ:+(dm._orbitZ||0).toFixed(1),az:+(dm._orbitAz||0).toFixed(3),zoom:+(dm._orbitZoom||0).toFixed(2),oz:+(dm._orbitZ||0).toFixed(2),ox:+(dm._orbitX||0).toFixed(2),lift:+(dm._orbitLift||0).toFixed(2),shot:dm._lastDemoShot},rivals:rivals?rivals.map(function(r){return{id:r._id,spd:~~r.speed,top:~~r.top,lap:r.lap,x:+r.x.toFixed(2),blk:+(r._blockT||0).toFixed(2)};}):[],power2:P&&+P.power.toFixed(1),P:P,seg:seg,demoClock:_demoClock};},
 };
 
 })();
@@ -24905,6 +25328,8 @@ var DEMO_VIEWS=[
   {name:'OVERHEAD',      cam:2, az:0,     zoom:1,    lift:0},
   {name:'CLOSE CHASE',   cam:3, az:0,     zoom:1,    lift:0},
   {name:'CINEMATIC',     cam:4, az:0,     zoom:1,    lift:0},
+  /* The driver's own eye — the same view Y selects in a race. */
+  {name:'FIRST PERSON',  cam:5, az:0,     zoom:1,    lift:0, fpv:true},
   /* Orbit positions: for checking sprite orientation and the road's shape from
      angles the player never normally sees. */
   {name:'HEAD-ON',       cam:0, az:2.05,  zoom:2.10, lift:0.20},
@@ -25149,6 +25574,7 @@ function _inDemo(){
           _rep(14,'left'); _rep(15,'right');
         }
         if(edge(0))F.input('a');
+        if(edge(2))F.input('x');         // X: race again on the result screen
         if(edge(4))F.input('lb');        // (3) LB: previous shop tab
         if(edge(5))F.input('rb');        // (3) RB: next shop tab
           /* ═══ Y IS CONTEXTUAL (item 27)  Y was dispatched only as 'shop', so the preview tile's flip handler — which listens for 'y' — never received anything and the tile appeared dead however  */
@@ -25310,6 +25736,7 @@ document.addEventListener('keydown',e=>{
     else if(e.key==='ArrowUp')F.input('up');
     else if(e.key==='ArrowDown')F.input('down');
     else if(e.key==='Enter')F.input('a');
+    else if(e.key==='x'||e.key==='X')F.input('x');
     else if(e.key==='Escape'){ if(!F.input('b'))closeWorldMap(); }
     return;
   }
