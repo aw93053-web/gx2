@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>ZONE STORM RACING GX</title>
+<link rel="preload" href="press-start-2p-v16-latin-regular.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="germania-one-v21-latin-regular.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="race.css">
+<link rel="icon" href="data:,">
+
+</head>
+<body>
+
+<div id="gx-corner">
+  <span class="t-logo" data-text="ZONE STORM">ZONE STORM</span>
+  <span class="t-logo sub" data-text="RACING GX">RACING GX</span>
+</div>
+
+<div id="title-veil"></div>
+
+<div class="screen" id="scr-title">
+  <div class="t-wrap">
+        <div id="title-logo-row">
+      <div id="title-zone-wrap"><div class="t-logo" data-text="ZONE STORM">ZONE STORM</div></div>
+      <div id="title-storm-wrap"><div class="t-logo" data-text="RACING GX">RACING GX</div></div>
+    </div>
+    <div class="t-tagline">ゾーン・ストーム レーシング GX</div>
+    <div class="t-menu" id="tmenu"></div>
+    <div class="t-copy" id="tagline-el">&copy; Copyright 2026 アレックス</div>
+  </div>
+  <div class="t-ver">BUILD 2026.9-GX</div>
+</div>
+
+<div class="screen" id="scr-league">
+  <div class="gx-wrap">
+    <div class="gx-head gx-serif">GRAND PRIX</div>
+    <div class="gx-sub">SELECT LEAGUE</div>
+    <div class="gx-row" id="league-row"></div>
+  </div>
+  <div class="gx-foot">↑↓ SELECT · A CONFIRM · B BACK</div>
+</div>
+
+<div class="screen" id="scr-gp">
+  <div class="gx-wrap">
+    <div class="gx-brand-bar"><span class="t-logo" data-text="ZONE STORM RACING GX">ZONE STORM RACING GX</span></div>
+      <div class="gx-head gx-serif" id="gp-head">KNIGHT LEAGUE</div>
+    <div class="gx-gp-cols">
+      <div><div class="gx-courses-title" id="gp-courses-title">COURSES</div>
+        <ol class="gx-tracks" id="gp-tracks"></ol></div>
+      <div><div class="gx-sub gx-sub-spaced">SELECT MACHINE</div>
+        <div class="gx-row" id="gp-cars"></div></div>
+    </div>
+  </div>
+  <div class="gx-foot">←→ MACHINE · A START · B BACK</div>
+</div>
+
+<div class="screen" id="scr-tour">
+  <div class="gx-wrap">
+    <div class="gx-brand-bar"><span class="t-logo" data-text="ZONE STORM RACING GX">ZONE STORM RACING GX</span></div>
+      <div class="gx-head gx-serif">WORLD TOUR</div>
+    <div class="gx-globe"></div>
+    <div class="gx-sub">SELECT MACHINE</div>
+    <div class="gx-row" id="tour-cars"></div>
+  </div>
+  <div class="gx-foot">←→ MACHINE · A START · B BACK</div>
+</div>
+
+<div id="gx-results"></div>
+<canvas id="crt" class="scanl"></canvas>
+
+<div id="fps-counter">FPS: 0</div>
+
+<div id="zs-db">
+  <div id="zs-db-title" onclick="_dbCollapse()">▼ DEBUG MODE</div>
+  <div id="zs-db-body">
+    <div id="zs-db-btns"></div>
+    <div id="zs-stick-dbg"></div>
+  </div>
+</div>
+<div id="zs-db-textmodal">
+  <button class="zs-db-btn zs-db-btn-inline zs-db-btn-gap"
+    onclick="document.getElementById('zs-db-textmodal').style.display='none'">CLOSE</button>
+  <button class="zs-db-btn zs-db-btn-inline" onclick="_dbCopyText()">COPY ALL</button>
+  <div id="zs-db-textbody"></div>
+</div>
+
+<script src="fx.js"></script>
+<script src="world.js"></script>
+<script src="drive.js"></script>
+<script src="debug.js"></script>
+</body>
+</html>

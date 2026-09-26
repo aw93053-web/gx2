@@ -1,0 +1,735 @@
+@font-face{font-family:'Press Start 2P';src:url(press-start-2p-v16-latin-regular.woff2) format("woff2");font-weight:400;font-style:normal;font-display:swap}@font-face{font-family:'Germania One';src:url(germania-one-v21-latin-regular.woff2) format("woff2");font-weight:400;font-style:normal;font-display:swap}body{background:#000;overflow:hidden;font-family:'Press Start 2P',monospace;cursor:none;overflow-x:hidden;max-width:100vw}#crt{display:none!important}#crt::after{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 50% 48%,transparent 52%,#000000a6 100%)}.scanl{position:fixed;left:0;right:0;height:2px;background:#39ff1406;pointer-events:none;z-index:5;animation:scanl 7s linear infinite}@keyframes scanl{0%{top:-3px}100%{top:100vh}}.screen{position:fixed;inset:0;z-index:20;display:none;flex-direction:column;align-items:center;justify-content:center;overflow-y:auto;-webkit-overflow-scrolling:touch}#scr-title{overflow-x:hidden;display:flex;cursor:default;background:transparent!important}.t-bg{position:absolute;inset:0;background:linear-gradient(180deg,#00000080 0%,#00000026 40%,#000000d9 100%)}.t-wrap{position:relative;z-index:2;text-align:center;animation:fadeUp .7s ease both}.t-logo{font-family:'Germania One',serif!important;font-size:clamp(326px,6vw,156px);letter-spacing:-2px;line-height:.85;display:inline-block;position:relative;background:linear-gradient(180deg,#000,#800,#ff4500,#fff,#ff4500,#800,#000);background-size:100% 400%;background-position:50% 40%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;-webkit-text-stroke:1.5px #ff3c0066;text-shadow:0 12px 24px #0009,0 3px 10px #000000a6;will-change:background-position;animation:lock-in-drop 1s cubic-bezier(0.15,0.85,0.35,1.1) forwards,agonizing-fire 15s ease-in-out infinite,smoke-sway 10s ease-in-out infinite alternate;filter:saturate(200%) brightness(120%) contrast(180%)}.t-logo::after{content:attr(data-text);position:absolute;left:0;top:0;width:100%;height:100%;z-index:1;background:linear-gradient(180deg,#400,red,#fff,#fff,red,#400);background-size:100% 400%;background-position:50% 40%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:fade-over 20s ease-in-out infinite,agonizing-fire 12s ease-in-out infinite reverse}.t-menu{display:flex;flex-direction:column;gap:clamp(8px,1.6vh,18px);align-items:flex-start;margin:0}.t-item,.mbtn,.mod-card,.ms-card,.back-btn,.opt-row,.sb-item,.sbt,.sbtl-ico,button,input[type=button]{touch-action:manipulation;-webkit-tap-highlight-color:#39ff142e;user-select:none;-webkit-user-select:none}.t-tip{margin-top:36px;font-size:13px;color:var(--dim);letter-spacing:1px;line-height:2.8}.cut-portrait.active{border-color:var(--g);box-shadow:0 0 14px #39ff144d}.t-item{font-size:clamp(11px,1.5vw,20px);color:#8fd6ff;letter-spacing:3px;font-weight:700;display:flex;align-items:center;gap:12px;cursor:pointer;padding:6px 14px;border:1px solid transparent;transition:all .1s;min-width:220px;font-family:'Press Start 2P',monospace;text-shadow:0 2px 12px #000000e6}.t-item:hover{color:var(--g);border-color:#1a3a1a;background:#39ff1412;padding-left:28px;box-shadow:0 0 12px #39ff142e}.t-item .arr{color:var(--g);visibility:hidden;animation:blink .6s step-end infinite}.t-item.sel .arr{visibility:visible}@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}@keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}@keyframes pulse{from{opacity:.8}to{opacity:1}}#title-zone-wrap,#title-storm-wrap{display:block;line-height:.85}body.lang-jp .mbtn,body.lang-jp .opt-row label,body.lang-jp .opt-val,body.lang-jp .how-col p,body.lang-jp .how-pan h2,body.lang-jp .how-col h3,body.lang-jp .go-stats,body.lang-jp .back-btn,body.lang-jp .t-tip,body.lang-jp .sb-item,body.lang-jp .hud-bar,body.lang-jp .hud-label,body.lang-jp .ms-info .mi-name,body.lang-jp .ms-info .mi-desc,body.lang-jp .ms-info .mi-desc,body.lang-jp .toast-inner,body.lang-jp #go-hint,body.lang-jp .sbtl-ico,body.lang-jp #tut-body,body.lang-jp #tut-title,body.lang-jp #tut-nav-hint,body.lang-jp #placeinfo{font-family:'Noto Sans JP',sans-serif}body.lang-jp .t-tip{font-size:17px}body.lang-jp,body.lang-jp .mbtn,body.lang-jp .back-btn,body.lang-jp button,body.lang-jp .t-item,body.lang-jp .tmi,body.lang-jp .opt-row,body.lang-jp .opt-val,body.lang-jp .opt-row label,body.lang-jp .hud-bar,body.lang-jp .hud-label,body.lang-jp #hud-active-lbl,body.lang-jp #pu-hud-lbl,body.lang-jp .sb-item,body.lang-jp .si-name,body.lang-jp .si-cost,body.lang-jp .sbtl-ico,body.lang-jp #sbtl-active,body.lang-jp .go-stats,body.lang-jp #go-hint,body.lang-jp .how-col p,body.lang-jp .how-col h3,body.lang-jp .ms-info,body.lang-jp .mi-name,body.lang-jp .mi-desc,body.lang-jp #toast,body.lang-jp #utost,body.lang-jp #tut-body,body.lang-jp #tut-title,body.lang-jp .panel,body.lang-jp .pfooter,body.lang-jp .go-menu,body.lang-jp #pmenu,body.lang-jp .pause-pan h2,body.lang-jp #chapter-hud-lbl,body.lang-jp .mcd,body.lang-jp .mprev-hint{font-family:'Noto Sans JP',sans-serif!important}body.lang-jp .t-logo,body.lang-jp .mprev-title,body.lang-jp .lu-title,body.lang-jp #battle-intro-banner,body.lang-jp .mcn{font-family:'Germania One',serif!important}body.lang-jp #fps-counter,body.lang-jp #cheat-indicator{font-family:'Press Start 2P',monospace!important}.t-logo-off .t-logo,.t-logo-off .t-tagline,div.t-logo-off{animation:smoke-sway 10s ease-in-out infinite alternate!important;background-position:50% 40%!important}@keyframes storm{0%,100%{transform:translate(0,0)}25%{transform:translate(2px,-2px)}50%{transform:translate(-2px,2px)}75%{transform:translate(2px,2px)}}.scanl,#crt{will-change:transform;transform:translateZ(0)}#scr-title .t-wrap{position:relative;z-index:3;text-shadow:0 2px 18px #000000f2;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;width:100%;gap:clamp(10px,2.2vh,30px);height:100%;padding:4vh 4vw}#title-veil{position:fixed;inset:0;z-index:2;pointer-events:none;background:radial-gradient(ellipse at 50% 38%,#000000b8 0%,#0000006b 45%,#000000c7 100%)}#gx-corner{position:fixed;top:10px;left:12px;z-index:2000001;pointer-events:none;line-height:1.05;display:none;
+  /* (14) SINGLE LINE. The two spans are block-level via `#gx-corner .t-logo
+     {display:block}` below, which stacked "RACING GX" under "ZONE STORM".
+     Flex on one row puts them side by side; white-space:nowrap stops a narrow
+     viewport from re-wrapping them. */
+  white-space:nowrap}
+body.in-race #gx-corner{display:flex;align-items:baseline;gap:6px}
+#gx-corner .t-logo{display:inline-block!important}
+#gx-corner .t-logo.sub{align-self:baseline}#gx-corner .t-logo{font-size:18px;letter-spacing:2px;display:block;animation:agonizing-fire 15s ease-in-out infinite!important;background:linear-gradient(180deg,#000,#800,#ff4500,#fff,#ff4500,#800,#000)!important;background-size:100% 400%!important;-webkit-background-clip:text!important;background-clip:text!important;-webkit-text-fill-color:transparent!important;content:normal}#gx-corner .t-logo.sub{font-size:9px;letter-spacing:1px;opacity:.95}.gx-wrap{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;font-family:'Press Start 2P',monospace}.gx-head{color:#39ff14;font-size:clamp(18px,2.6vw,34px);letter-spacing:3px;text-shadow:0 0 12px #39ff1499}.gx-sub{color:#8fd6ff;font-size:9px;letter-spacing:2px}.gx-row{display:flex;gap:14px;flex-wrap:wrap;justify-content:center}.gx-card{border:2px solid #1e3a5a;background:#04101aeb;border-radius:8px;padding:14px 18px;min-width:190px;cursor:pointer;transition:border-color .12s,transform .12s;position:relative}.gx-card.sel{border-color:transparent;transform:translateY(-3px);box-shadow:0 0 18px #39ff1459}.gx-card h3{margin:0 0 8px;font-size:16px!important;letter-spacing:2px;font-family:'Germania One','Press Start 2P',serif!important}.gx-card p{margin:0;font-size:8px;line-height:1.7;color:#9fb6c9}.gx-stat{display:flex;justify-content:space-between;font-size:7px;color:#cde;margin-top:3px}.gx-bar{height:5px;background:#12283c;border-radius:3px;overflow:hidden;margin-top:2px}.gx-bar i{display:block;height:100%;background:linear-gradient(90deg,#39ff14,#8fd6ff)}.gx-tracks{list-style:none;padding:0;margin:0;font-size:9px;color:#cde;line-height:2.1;text-align:left}.gx-tracks li span{color:#ffd23a;margin-right:8px}.gx-tracks li em{color:#6f8;font-style:normal;margin-left:10px;font-size:8px}.gx-foot{position:absolute;bottom:16px;left:0;right:0;text-align:center;color:#68a;font-size:8px;letter-spacing:2px}.gx-globe{width:120px;height:120px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#4fd2ff,#0a3d6b 60%,#04203a);box-shadow:0 0 30px #50c8ff73,-14px -10px 30px #0000008c;position:relative;overflow:hidden}.gx-globe::before,.gx-globe::after{content:'';position:absolute;inset:0;border-radius:50%;border:1px solid #b4f0ff47}.gx-globe::before{transform:scaleX(0.45)}.gx-globe::after{transform:scaleY(0.42)}.gx-serif{font-family:'Germania One','Press Start 2P',serif!important;letter-spacing:2px}#zs-db{display:none!important;position:fixed;top:4px;right:auto;z-index:2000003;background:#02080ef2;border:1px solid #4fc3ff;border-radius:6px;font-family:'Press Start 2P',monospace;font-size:7px;color:#8fd6ff;width:auto;left:50%;transform:translateX(-50%);max-width:99vw;align-items:center;gap:6px;padding:3px 6px}#zs-db-title{cursor:pointer;color:#fff;background:#0d5c8a;padding:4px 8px;border-radius:4px;letter-spacing:2px;user-select:none;text-align:center;flex:0 0 auto;margin:0;font-size:6.5px;white-space:nowrap}#zs-db-body{padding:8px 9px;display:flex;align-items:center;gap:6px;flex-wrap:nowrap;flex:1 1 auto;min-width:0}#zs-db.collapsed #zs-db-body{display:none}.zs-db-btn{display:inline-block;width:auto;margin:0;padding:4px 6px;background:#2b2b2b;color:#fff;border:1px solid #4a4a4a;border-radius:4px;font-family:'Press Start 2P',monospace;font-size:6px;letter-spacing:1px;cursor:pointer;text-align:left;white-space:nowrap;flex:0 0 auto}.zs-db-btn:hover{background:#3c3c3c}#zs-stick-dbg{color:#fff;font-size:6px;line-height:1.35;margin-top:0!important;white-space:pre;text-align:center;flex:0 0 auto;border-left:1px solid #4a4a4a;padding-left:8px;display:none!important}#zs-db-textmodal{display:none;position:fixed;inset:0;z-index:2000004;background:#00000080;padding:14px;overflow:hidden;font-family:'Press Start 2P',monospace;font-size:9.2px;color:#cde;line-height:1.65}#gx-results{display:none;position:fixed;inset:0;z-index:2000000;pointer-events:none;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:8vh;gap:10px}#gx-results .line{opacity:0;transition:opacity .7s ease;color:#fff;font-size:16px;text-shadow:0 3px 16px #000000f2}#gx-results .line.on{opacity:1}#gx-results .hint{color:#ffd23a;font-size:11px;margin-top:14px}.screen.active{display:flex!important;flex-direction:column;align-items:center;justify-content:center}#scr-title.active{display:flex!important}#title-logo-row{display:block;text-align:center;line-height:.98}#title-logo-row .t-logo{display:block;font-size:clamp(38px,9.5vw,132px);letter-spacing:clamp(2px,0.7vw,10px);position:relative;will-change:background-position;transform:translateZ(0)}#title-storm-wrap .t-logo{font-size:clamp(26px,6.4vw,90px);margin-top:-.06em}.t-logo em{font-style:normal;-webkit-text-fill-color:transparent;display:inline}@keyframes smoke-sway{0%{transform:translateX(-3px) rotate(-0.5deg)}100%{transform:translateX(3px) rotate(0.5deg)}}@keyframes fade-over{0%,100%,40%{opacity:0}50%,90%{opacity:1}}@keyframes intensity-cycle{0%,100%,40%{filter:saturate(200%) brightness(120%) contrast(180%)}50%,90%{filter:saturate(300%) brightness(160%) contrast(200%)}}@keyframes agonizing-fire{0%,100%{background-position:50% 0}50%{background-position:50% 100%}}@keyframes lock-in-drop{0%{opacity:0;transform:translateY(-300px);filter:blur(40px) brightness(0%)}100%{opacity:1;transform:translateY(0);filter:blur(0px)}}.t-tagline{font-size:clamp(13px,0.9vw,19px);letter-spacing:4px;margin-top:4px;display:inline-block;position:relative;background:linear-gradient(180deg,#000,#800,#ff4500,#fff,#ff4500,#800,#000);background-size:100% 400%;background-position:50% 40%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;-webkit-text-stroke:.5px #ff3c004d;text-shadow:0 8px 10px #000000b3;will-change:background-position;animation:agonizing-fire 15s ease-in-out infinite,intensity-cycle 20s ease-in-out infinite,smoke-sway 12s ease-in-out infinite alternate;filter:saturate(180%) brightness(110%)}.t-tagline::after{content:"";position:absolute;left:0;top:0;width:100%;height:100%;z-index:1;background:linear-gradient(180deg,#400,red,#fff,#fff,red,#400);background-size:100% 400%;background-position:50% 40%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:fade-over 20s ease-in-out infinite,agonizing-fire 12s ease-in-out infinite reverse}.t-item.sel{color:#39ff14;text-shadow:0 0 14px #39ff14cc,0 2px 12px #000000e6}.t-copy{font-family:'Press Start 2P',monospace;font-size:8px;letter-spacing:2px;color:#4a6a80;text-shadow:0 2px 10px #000000e6}.t-ver{position:fixed;bottom:10px;left:12px;font-family:'Press Start 2P',monospace;font-size:7px;color:#33505f;letter-spacing:1px;z-index:30}#gx-corner .t-logo,#gx-corner .t-logo::after,#gx-corner .t-logo::before{animation:none!important;background:none!important;-webkit-text-fill-color:#8fd6ff!important;-webkit-background-clip:border-box!important;background-clip:border-box!important;text-shadow:0 2px 8px #000000e6;filter:none!important;content:none}#gx-corner .t-logo::after{display:none!important}body.in-race #gx-corner{display:block}body:not(.on-title) #title-logo-row .t-logo,body:not(.on-title) #title-logo-row .t-logo::after,body:not(.on-title) .t-tagline,body:not(.on-title) .t-tagline::after{animation:none!important}.gx-carimg{display:flex;align-items:center;justify-content:center;height:150px;margin-bottom:6px}.gx-carimg img{max-height:120px;image-rendering:auto}.gx-card.sel::after{content:"";position:absolute;inset:-3px;border-radius:8px;pointer-events:none;border:3px solid #7fd0ff;box-shadow:0 0 18px #7fd0ffbf,0 0 12px #7fd0ff59;animation:gx-select-pulse 1.5s ease-in-out infinite}@keyframes gx-select-pulse{0%,100%{opacity:.55;box-shadow:0 0 10px #7fd0ff73,0 0 8px #7fd0ff33}50%{opacity:1;box-shadow:0 0 26px #7fd0fff2,0 0 16px #7fd0ff80}}#zs-db-textbody{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr))!important;grid-auto-rows:1fr;gap:10px;align-content:stretch;align-items:stretch;height:calc(100vh - 70px);white-space:normal;overflow-y:auto!important}.dbg-tile{background:#040e16b8;border:1px solid #2a4a5e;border-radius:5px;padding:8px 10px;min-height:0;max-height:none;overflow-y:auto;scrollbar-width:none}.dbg-tile h4{margin:0 0 6px;color:#39ff14;font-size:9px;letter-spacing:1px;border-bottom:1px solid #234;padding-bottom:4px}.dbg-tile table{width:100%;border-collapse:collapse;font-size:8.5px}.dbg-tile td{padding:1px 0;vertical-align:top;color:#cde;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dbg-tile td:first-child{color:#7fa8c0;padding-right:8px;white-space:nowrap;width:46%}#gp-cars,#tour-cars{display:grid;grid-template-columns:repeat(2,1fr);gap:clamp(10px,1.6vw,22px);justify-items:stretch;width:46vw!important;max-width:46vw!important;height:74vh;grid-template-rows:repeat(2,1fr);margin:0 auto}#gp-tracks{max-width:270px}#scr-league .gx-wrap{justify-content:flex-start;padding-top:12vh}#league-row{flex-direction:column;align-items:center;gap:10px;margin-top:6px}#league-row .gx-card{min-width:300px}#gx-worldmap{border-image:repeating-conic-gradient(#e8e8e8 0turn 0.25turn,#101010 0turn 0.5turn) 0 0 / 18px / 0 stretch;border-style:solid;border-width:18px;box-sizing:border-box;position:fixed;inset:0;width:100vw;height:100vh;animation:intensity-cycle 10s ease-in-out infinite}.t-sub{font-family:"Press Start 2P",monospace;font-size:clamp(9px,1.05vw,14px);letter-spacing:2px;color:#7fa8c0;padding:3px 10px 3px 34px;text-shadow:0 2px 12px #000000e6}.t-sub.sel{color:#ffd23a;text-shadow:0 0 12px #ffd23acc,0 2px 12px #000000e6}#scr-gp.active,#scr-tour.active{background:transparent!important;border-style:solid;border-width:16px;box-sizing:border-box;border-image:repeating-conic-gradient(#e8e8e8 0turn 0.25turn,#101010 0turn 0.5turn) 0 0 / 16px / 0 stretch}body:not(.on-title) #scr-title{display:none!important}#zs-db-btns{display:flex;flex-wrap:nowrap!important;gap:4px;align-items:center;justify-content:center;overflow-x:auto;flex:0 1 auto}.gx-carcv{width:100%;height:100%}#gp-cars .gx-card,#tour-cars .gx-card{min-width:0;display:flex;flex-direction:column;justify-content:center;padding:clamp(10px,1.4vw,20px);background:#04101ae0!important;backdrop-filter:blur(2px)}#gp-cars .gx-card h3,#tour-cars .gx-card h3{font-size:clamp(13px,1.7vw,24px)!important;margin-bottom:6px}#gp-cars .gx-stat,#tour-cars .gx-stat{font-size:clamp(8px,0.95vw,13px)}#gp-cars .gx-card p,#tour-cars .gx-card p{font-size:clamp(8px,0.9vw,12px);line-height:1.6}#gp-cars .gx-carimg,#tour-cars .gx-carimg{height:clamp(80px,13vh,150px)}#gp-cars .gx-bar,#tour-cars .gx-bar{height:7px}#scr-gp .gx-sub,#scr-tour .gx-sub{font-size:clamp(9px,1.1vw,14px)}#gx-continue{display:none;position:fixed;inset:0;z-index:2000006;align-items:center;justify-content:center;background:#000004e0}.gx-cont-box{border:3px solid #7fd0ff;background:#04101af5;padding:34px 56px;text-align:center;border-radius:8px;box-shadow:0 0 32px #7fd0ff59}.gx-cont-title{font-family:"Germania One",serif;font-size:clamp(26px,4vw,52px);color:#ffd23a;letter-spacing:4px;margin-bottom:8px}.gx-cont-sub{font-family:"Press Start 2P",monospace;font-size:9px;color:#8fa8b8;letter-spacing:2px;margin-bottom:22px}.gx-cont-opt{font-family:"Germania One",serif;font-size:clamp(18px,2.4vw,30px);color:#7fa8c0;letter-spacing:3px;padding:6px 0;cursor:pointer}.gx-cont-opt.sel{color:#39ff14;text-shadow:0 0 14px #39ff14cc}.gx-brand-bar{display:flex;align-items:center;justify-content:center;gap:14px;border:2px solid #78f096b3;border-radius:4px;background:#030e18eb;padding:8px 22px;margin-bottom:14px}.gx-brand-bar .t-logo{font-size:clamp(13px,1.7vw,22px);letter-spacing:2px;display:inline-block}#title-zone-wrap:not(#title-logo-row *),body.in-race .t-logo:not(#gx-corner .t-logo):not(#title-logo-row .t-logo):not(#_sr_logo .t-logo):not(#_sr_logo2 .t-logo):not(#_pause_logo .t-logo){display:none!important}
+/* SR menu logos always visible — they must outrank the in-race hide rule */
+#_sr_logo .t-logo,#_sr_logo2 .t-logo{display:inline-block!important;visibility:visible!important;opacity:1!important;
+  font-size:clamp(30px,3.6vw,52px)!important;letter-spacing:0.06em!important;
+  line-height:1.1!important;white-space:nowrap!important;transform:none!important}body.in-race #gx-corner .t-logo{animation:agonizing-fire 15s ease-in-out infinite!important;background:linear-gradient(180deg,#000,#800,#ff4500,#fff,#ff4500,#800,#000)!important;background-size:100% 400%!important;-webkit-background-clip:text!important;background-clip:text!important;-webkit-text-fill-color:transparent!important}/* (1) THE FLUID WAS BURIED DURING RACES.
+   z-index:1 !important applied to EVERY screen, but the race canvas sits at
+   z-index 2000000 — so in-race the fluid was painted 2 million layers below
+   the game and could never be seen, whatever waterfx set inline. The !important
+   also overrode the per-mode z-index the module assigns.
+   Geometry stays here; LAYERING is left to waterfx.js, which knows which mode
+   is active. */
+#zs-waterfx{position:fixed!important;left:0!important;top:0!important;width:100vw!important;height:100vh!important;display:block}
+/* Menu screens only: sit behind their DOM content. */
+body.zs-worldmap #zs-waterfx{z-index:1499!important}
+#scr-gp.active::before,#scr-tour.active::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;background:radial-gradient(ellipse at 50% 50%,#00040c59 0%,#00040cb3 100%)}body.zs-debug-on #zs-db{display:flex!important}.dbg-tile::-webkit-scrollbar{display:none;width:0;height:0}#zs-waterfx.zs-nofluid{display:none!important}#zs-algo-modal,#zs-algo-modal *{cursor:default!important}#zs-algo-modal button,#zs-algo-modal input,#zs-algo-modal select{cursor:pointer!important}#zs-algo-modal input[type=range]{cursor:ew-resize!important}@keyframes algo-play-pulse{0%,100%{box-shadow:0 0 6px #7fd0ff73}50%{box-shadow:0 0 22px #7fd0ffff}}#algo-test-btn.algo-play-focus{outline:3px solid #7fd0ff;animation:algo-play-pulse 1.6s ease-in-out infinite}
+/* (3) CAR SELECT UPDATES.
+   Branding 50% larger; the courses list shifted down 20px and left 150px and
+   given the league's own name in the logo face. */
+.gx-brand-bar .t-logo{font-size:clamp(20px,2.55vw,33px)!important;}
+#gp-tracks{position:relative;top:20px;left:-150px;}
+.gx-courses-title{
+  font-family:'Germania One','Press Start 2P',serif!important;
+  font-size:clamp(20px,2.55vw,33px);
+  letter-spacing:2px;color:#8fd6ff;
+  margin-bottom:8px;white-space:nowrap;
+}
+
+/* ═══ (5) CAR SELECT ═════════════════════════════════════════════════════
+   Branding 50% larger with no border; the league heading removed (the courses
+   title already names the league); the courses list moved left and given
+   larger, single-line track names. */
+.gx-brand-bar{ border:none!important; background:transparent!important; }
+.gx-brand-bar .t-logo{ font-size:clamp(30px,3.8vw,50px)!important; }
+#scr-gp .gx-head,#scr-tour .gx-head{ display:none!important; }
+#gp-tracks{ position:relative; top:20px; left:-150px; max-width:none; }
+#gp-tracks li{
+  font-size:clamp(11px,1.25vw,17px);
+  line-height:2.0;
+  white-space:nowrap;      /* track names on one line each */
+  overflow:visible;
+}
+.gx-courses-title{ margin-left:-150px; }
+
+/* ═══ (6) WORLD MAP ══════════════════════════════════════════════════════ */
+#gx-worldmap{
+  position:fixed!important; inset:0!important;
+  width:100vw!important; height:100vh!important;
+  border-width:18px!important; box-sizing:border-box!important;
+}
+/* The title screen must never show behind the map. */
+body.zs-worldmap #scr-title{ display:none!important; }
+
+/* (4) Checkerboard pushed 70px beyond each screen edge, so the border sits on
+   the very edge of the display rather than inset from it. */
+#gx-worldmap{
+  position:fixed!important;
+  left:-70px!important; top:-70px!important;
+  width:calc(100vw + 140px)!important;
+  height:calc(100vh + 140px)!important;
+  border-width:88px!important;
+  box-sizing:border-box!important;
+}
+
+/* (1) Checkerboard fully covers the screen edges so no fluid shows past it,
+   and the title screen is hidden entirely behind the world map. */
+#gx-worldmap{
+  position:fixed!important;
+  left:-70px!important; top:-70px!important;
+  width:calc(100vw + 140px)!important;
+  height:calc(100vh + 140px)!important;
+  border-width:50px!important;
+  box-sizing:border-box!important;
+}
+body.zs-worldmap #scr-title,
+body.zs-worldmap .t-wrap,
+body.zs-worldmap .t-menu,
+body.zs-worldmap #title-logo-row,
+body.zs-worldmap #gx-corner,
+body.zs-worldmap #title-veil{ display:none!important; }
+
+
+/* ═══ (5) STYLES LIFTED OUT OF drive.js ══════════════════════════════════════
+   These were assigned with element.style.cssText at runtime. Rules that never
+   change belong here: keeping them in JavaScript meant a styling tweak
+   required editing the engine, and none of it could be overridden without
+   touching code. Only genuinely dynamic values (a computed position, a live
+   opacity) stay inline.
+   ═══════════════════════════════════════════════════════════════════════════ */
+#zs-rstick-dbg{
+  color:#fff; font-size:7px; font-family:monospace;
+  position:fixed; pointer-events:none; z-index:2000004;
+  white-space:pre; line-height:1.5;
+}
+#zs-gpusnow{
+  position:fixed; inset:0; pointer-events:none; z-index:2000001;
+}
+/* Same layer as the snow — the two are mutually exclusive (a track is snowy
+   or rainy, never both), so they can share a z-index without ordering issues. */
+#zs-gpurain{
+  position:fixed; inset:0; pointer-events:none; z-index:2000001; display:none;
+}
+/* Sandstorm layer. Same z-index as the other weather overlays — a track is
+   desert or wet or snowy, never two at once, so they cannot contend. */
+#zs-gpusand{
+  position:fixed; inset:0; pointer-events:none; z-index:2000001; display:none;
+}
+/* Single definition — see the corner-mark block near the end of this file.
+   Two #_drv_logo rules existed briefly and the later one silently won, which
+   is the kind of thing that wastes an afternoon later. */
+#_drive_canvas{
+  position:fixed; inset:0; z-index:2000000; background:#04010e;
+  /* DYNAMIC RESOLUTION SCALING. The backing store is rendered smaller than the
+     element (see _RES_LADDER in drive.js) and the browser stretches it to fill
+     the viewport. Nearest-neighbour is essential: the default smooth upscale
+     would blur the pixel art into mush, whereas hard pixels read as the
+     intended SNES-era look. width/height are belt-and-braces in case the
+     element is ever moved out of a fixed-inset context. */
+  width:100%; height:100%;
+  image-rendering:pixelated;
+  image-rendering:crisp-edges;          /* Firefox */
+  -ms-interpolation-mode:nearest-neighbor;
+}
+#_sr_menu{
+  position:fixed; inset:0; z-index:2000001;
+  background:rgba(1,0,10,0.96); overflow-y:auto; scroll-behavior:smooth;
+  font-family:monospace;
+}
+#_bc_menu{
+  position:fixed; inset:0; z-index:2000002;
+  background:rgba(1,0,10,0.96); overflow-y:auto; scroll-behavior:smooth;
+  font-family:monospace;
+}
+#zs-algo-modal{
+  position:fixed; inset:0; z-index:2147483647;
+  background:rgba(0,4,10,0.88);
+  display:flex; align-items:center; justify-content:center;
+  font-family:monospace; cursor:default;
+}
+#zs-leaguewin{
+  position:fixed; left:0; top:0; width:100vw; height:100vh;
+  z-index:2000005; display:block;
+}
+#gx-continue{
+  position:fixed; inset:0; z-index:2000006;
+  align-items:center; justify-content:center;
+  background:rgba(0,0,4,0.88);
+}
+
+/* (9) Progress bar for long debug operations. */
+#zs-db-progress{
+  display:none;position:fixed;left:50%;bottom:40px;transform:translateX(-50%);
+  z-index:2000010;width:min(560px,80vw);
+  background:rgba(3,14,24,0.96);border:1px solid #4fc3ff;border-radius:5px;
+  padding:10px 14px;font-family:'Press Start 2P',monospace;font-size:8px;color:#8fd6ff;
+}
+#zs-db-progress .p-label{margin-bottom:7px;letter-spacing:1px;}
+#zs-db-progress .p-track{background:#12283c;height:9px;border-radius:5px;overflow:hidden;}
+#zs-db-progress .p-fill{background:linear-gradient(90deg,#0a4,#0f8);height:100%;width:0%;transition:width .12s linear;}
+
+/* (13) The Continue prompt is drawn on the game-over canvas; the DOM modal is
+   retired so the smoke plume behind it stays visible. */
+#gx-continue{ display:none!important; }
+
+
+/* ═══ (11) SUPER RACING MENU — lifted out of drive.js ════════════════════════
+   These were injected at runtime as a <style> element and as inline style=""
+   attributes built into HTML strings. Keeping them here means the menu can be
+   restyled without editing the engine, and the keyframes are no longer
+   re-created on every open.
+   ═══════════════════════════════════════════════════════════════════════════ */
+@keyframes _srTilePulse{
+  0%,100%{ border-color:#5fcf8a; box-shadow:0 0 8px rgba(140, 255, 180, 0.25); }
+  50%    { border-color:#a6ffc8; box-shadow:0 0 20px rgba(140, 255, 180, 0.65); }
+}
+#_sr_menu{
+  position:fixed; inset:0; z-index:2000001;
+  background:rgba(1,0,10,0.96);
+  overflow-y:auto; scroll-behavior:smooth; font-family:monospace;
+}
+.sr-page{ max-width:1900px; margin:24px auto; padding:0 24px; }
+.sr-titlerow{
+  display:flex; align-items:center; justify-content:center;
+  gap:18px; margin-bottom:6px; flex-wrap:wrap;
+}
+.sr-titlerow .t-logo{ font-size:34px; letter-spacing:2px; line-height:1.15; }
+.sr-titlecol{ text-align:center; }
+.sr-grid{
+  display:grid; grid-template-columns:repeat(5,1fr); gap:14px; margin-top:18px;
+}
+.sr-tile{
+  background:#061018; border:1px solid #2a4a5e; border-radius:6px;
+  padding:10px; cursor:pointer; position:relative;
+}
+.sr-tile.sel{ animation:_srTilePulse 1.4s ease-in-out infinite; }
+.sr-tile h4{ margin:0 0 6px; color:#8fd6ff; font-size:12px; }
+.sr-feat{ color:#7f9aab; font-size:10px; line-height:1.6; }
+
+/* (3) The car-select control hint is redundant — the tiles are self-evident
+   and the line collided with the courses list. */
+#scr-gp .gx-hint,#scr-tour .gx-hint,
+#scr-gp .gx-foot,#scr-tour .gx-foot{ display:none!important; }
+
+/* (5) The title menu must not show behind the world map. */
+body.zs-worldmap #scr-title,
+body.zs-worldmap .t-wrap,
+body.zs-worldmap .t-menu,
+body.zs-worldmap #title-logo-row,
+body.zs-worldmap #gx-corner,
+body.zs-worldmap #title-veil{ display:none!important; }
+
+/* (5) The planet glyph on the World Tour machine-select screen: a decorative
+   emoji that rendered inconsistently across platforms and added nothing the
+   heading did not already say. */
+.gx-globe{ display:none!important; }
+
+/* (7) The blue globe on the World Tour machine-select screen. */
+.gx-globe{ display:none!important; }
+
+
+/* ═══ MOVED OUT OF race.html ═══════════════════════════════════════════════
+   These were inline `style=` attributes on markup. Inline styles win over
+   every stylesheet rule short of !important, so any of them that needed to be
+   overridden later forced an !important somewhere else — and none of them were
+   reachable from a theme or a media query while they sat in the HTML.
+   Same declarations, now as classes. */
+
+/* Hidden until the title screen fades it in. */
+#title-veil{ display:none; }
+
+/* Grand Prix screen: course list beside the machine picker. */
+.gx-gp-cols{
+  display:flex; gap:36px; align-items:flex-start;
+  flex-wrap:wrap; justify-content:center;
+}
+.gx-sub-spaced{ margin-bottom:8px; }
+
+/* Frame-rate readout. Toggled to block by the debug menu. */
+#fps-counter{
+  display:none; position:fixed; bottom:8px; right:12px;
+  font-family:'Press Start 2P',monospace; font-size:7px;
+  color:#39ff14; z-index:2000002; pointer-events:none;
+  letter-spacing:1px; text-shadow:0 0 6px rgba(57, 255, 20, 0.8);
+}
+
+/* Debug modal buttons sit on one row rather than filling the width. */
+.zs-db-btn-inline{ width:auto; display:inline-block; }
+.zs-db-btn-gap{ margin-right:8px; }
+
+
+/* (item 8) In-race corner mark. Was an inline cssText string in drive.js plus
+   per-line inline font rules; moved here so the three lines share one
+   definition and the sub-line can be sized relative to the others. */
+#_drv_logo{
+  position:fixed; z-index:2000002; pointer-events:none;
+  text-align:center; width:140px;
+}
+#_drv_logo .drv-logo-line{
+  font-size:19px; letter-spacing:2px; line-height:1.15;
+}
+#_drv_logo .drv-logo-sub{
+  font-size:12px; letter-spacing:3px; opacity:0.92;
+}
+
+
+/* ═══ KEYBOARD REFERENCE MODAL (H) ═════════════════════════════════════════
+   Above every screen but below nothing that needs input: pointer-events:none
+   means it can never intercept a click, so it is safe to leave open. */
+#zs-kbhelp{
+  position:fixed; inset:0; z-index:2000006; pointer-events:none;
+  display:flex; align-items:center; justify-content:center;
+  background:rgba(1,0,10,0.55);
+  font-family:'Press Start 2P',monospace;
+}
+#zs-kbhelp .zs-kb-box{
+  background:rgba(4,2,16,0.88);
+  border:2px solid rgba(143,214,255,0.55);
+  border-radius:8px;
+  padding:22px 26px;
+  box-shadow:0 0 34px rgba(0, 140, 255, 0.30);
+  min-width:min(520px,88vw);
+}
+#zs-kbhelp .zs-kb-title{
+  color:#8fd6ff; font-size:13px; letter-spacing:3px;
+  text-align:center; margin-bottom:16px;
+}
+#zs-kbhelp .zs-kb-row{
+  display:flex; justify-content:space-between; align-items:baseline;
+  gap:20px; margin:7px 0;
+}
+#zs-kbhelp .zs-kb-key{
+  color:#ffd23a; font-size:9px; letter-spacing:1px; white-space:nowrap;
+}
+#zs-kbhelp .zs-kb-act{
+  color:#cfe8ff; font-size:9px; letter-spacing:1px; text-align:right;
+}
+#zs-kbhelp .zs-kb-foot{
+  color:#5f9ec0; font-size:7px; letter-spacing:2px;
+  text-align:center; margin-top:16px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MOVED OUT OF drive.js   (item 18)
+   ---------------------------------------------------------------------------
+   These were `element.style.cssText = '...'` strings built in JavaScript. As
+   inline styles they beat every stylesheet rule short of !important, so any
+   later override needed an !important somewhere else — and none of them could
+   be reached by a theme, a media query or a devtools edit while they lived in
+   a string literal.
+
+   Each element already had a stable id, so these are straight id selectors and
+   the JavaScript now only creates the element. The one exception is the
+   settlement preview back face, which is created per tile and therefore uses a
+   class rather than an id.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Right-stick debug readout, inserted after a debug button. */
+#zs-rstick-dbg{
+  color:#ffffff; font-size:7px; font-family:monospace;
+  letter-spacing:0.5px; line-height:1.5; margin:3px 0 2px 2px;
+  white-space:pre;
+}
+
+/* Best Courses menu overlay. */
+#_bc_menu{
+  position:fixed; inset:0; z-index:2000002;
+  background:rgba(1,0,10,0.97); font-family:monospace;
+  display:flex; align-items:center; justify-content:center;
+}
+#_bc_body{ max-width:760px; width:92%; }
+
+/* World Tour settlement tile, reverse face. Flipped into view to show best and
+   recent lap times; hidden until then. */
+.zs-tile-back{
+  position:absolute; inset:0; border-radius:6px; padding:10px;
+  font-family:monospace; box-sizing:border-box;
+  display:none; flex-direction:column;
+  background:linear-gradient(160deg,#08131f,#0d1b2b);
+  z-index:2;
+}
+
+/* Algorithm Tool modal. The z-index is deliberately the maximum: it is a
+   developer surface and must sit above every game layer including the debug
+   panel. */
+#zs-algo-modal{
+  position:fixed; inset:0; z-index:2147483647;
+  background:rgba(0,4,10,0.88);
+  display:flex; align-items:center; justify-content:center;
+  font-family:monospace; cursor:default;
+}
+
+/* World map canvas. Sits below the race canvas and the weather overlays but
+   above the title screen, which is why it is 1500 rather than the 2000000
+   range everything else uses. */
+#gx-worldmap{
+  position:fixed; inset:0; z-index:1500; background:transparent;
+}
+
+/* Full-screen loading overlay ("PREPARING WORLD DATA" and similar). */
+#zs-loading{
+  position:fixed; inset:0; z-index:2000005; background:#000;
+  display:flex; align-items:center; justify-content:center;
+  font-family:'Press Start 2P',monospace;
+  font-size:11px; color:#8fd6ff; letter-spacing:2px;
+}
+
+
+/* Debug-bar controller focus (item 52). A class rather than an inline style:
+   the bar is re-rendered by _dbBtns(), which would discard inline styling. */
+.zs-db-focus{
+  outline:2px solid #ffd65a;
+  outline-offset:1px;
+  background:#3a4a58 !important;
+  box-shadow:0 0 10px rgba(255, 214, 90, 0.55);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   SUPER RACING MODE  —  2-row × 5-column layout
+   ══════════════════════════════════════════════════════════════════════════
+
+   Outer container: full-screen fixed overlay with the same repeating-conic
+   checkerboard border used by the World Tour map and the GP/Tour screens.
+   Inside: a centred flex-column with the t-logo heading, a one-liner hint,
+   and a strictly 2-row × 5-column tile grid. */
+#_sr_menu{
+  position:fixed;
+  inset:0;
+  z-index:2000010;
+  /* The checkerboard border sits on the overlay's own edge. */
+  border-image:repeating-conic-gradient(
+    #e8e8e8 0turn 0.25turn,
+    #101010 0turn 0.5turn) 0 0 / 18px / 0 stretch;
+  border-style:solid;
+  border-width:18px;
+  box-sizing:border-box;
+  background:#03080f;
+  overflow:hidden;
+}
+
+/* ── Content wrapper ──────────────────────────────────────────────────── */
+.sr-outer{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  width:100%;
+  height:100%;
+  padding:14px 24px 18px;
+  box-sizing:border-box;
+  gap:10px;
+}
+
+/* ── t-logo heading ───────────────────────────────────────────────────── */
+#_sr_logo{
+  text-align:center;
+  /* Always show the logo even when body.in-race would hide .t-logo */
+  display:block !important;
+}
+#_sr_logo .t-logo{
+  display:inline-block !important;
+  font-size:clamp(20px,3.2vw,44px);
+  letter-spacing:0.14em;
+}
+
+/* ── Hint bar ─────────────────────────────────────────────────────────── */
+.sr-hint{
+  font-family:'Press Start 2P',monospace;
+  font-size:clamp(6px,0.75vw,9px);
+  letter-spacing:2px;
+  color:#5a8aaa;
+  text-align:center;
+}
+
+/* ── 5-column × 2-row tile grid ──────────────────────────────────────── */
+#_sr_grid{
+  display:grid;
+  grid-template-columns:repeat(5,1fr);
+  grid-template-rows:repeat(2,1fr);
+  gap:clamp(8px,1.2vw,16px);
+  width:100%;
+  /* Fill the remaining vertical space below logo + hint */
+  flex:1 1 0;
+  min-height:0;
+}
+
+/* ── Individual tile ──────────────────────────────────────────────────── */
+._sr_tile{
+  background:#060d18;
+  border:2px solid #1e4a36;
+  border-radius:8px;
+  cursor:pointer;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  padding:8px 8px 6px;
+  min-width:0;
+  min-height:0;
+  overflow:hidden;
+  transition:border-color .12s;
+  position:relative;
+}
+._sr_tile:hover{ border-color:#3a8a64; }
+
+/* ── Track-preview canvas — fills most of the tile ───────────────────── */
+.sr-preview{
+  /* Scale the 200×150 canvas to fill available width while keeping 4:3 */
+  width:100%;
+  height:auto;
+  aspect-ratio:4/3;
+  border-radius:5px;
+  border:1px solid #1a3a2a;
+  background:#08101e;
+  display:block;
+}
+
+/* ── Track name ───────────────────────────────────────────────────────── */
+.sr-tile-name{
+  font-family:'Press Start 2P',monospace;
+  font-size:clamp(6px,0.75vw,9px);
+  color:#d4efff;
+  text-align:center;
+  margin-top:5px;
+  overflow:hidden;
+  white-space:nowrap;
+  text-overflow:ellipsis;
+  width:100%;
+  letter-spacing:1px;
+}
+
+/* ── Best time ────────────────────────────────────────────────────────── */
+.sr-tile-time{
+  font-family:'Press Start 2P',monospace;
+  font-size:clamp(5px,0.65vw,8px);
+  color:#7fce9e;
+  text-align:center;
+  margin-top:2px;
+  letter-spacing:1px;
+}
+
+/* ── Selected state (JS adds inline animation; border overridden here) ─ */
+._sr_tile[style*="_srTilePulse"]{
+  border-color:#5fcf8a;
+  box-shadow:0 0 18px #39ff1455;
+}
+
+/* ── Empty state ──────────────────────────────────────────────────────── */
+.sr-empty{
+  grid-column:1/-1;
+  grid-row:1/-1;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color:#3a6a50;
+  font-family:'Press Start 2P',monospace;
+  font-size:clamp(8px,1vw,12px);
+  text-align:center;
+  padding:20px;
+}
+
+/* ── Preserve legacy .sr-page / .sr-cb-border / .sr-sub in case any other
+   code still references them (no visual effect on #_sr_menu) ────────── */
+.sr-page{ max-width:1900px; margin:24px auto; padding:0 24px; }
+.sr-titlerow{ display:flex; align-items:center; justify-content:center;
+  gap:18px; margin-bottom:6px; flex-wrap:wrap; }
+.sr-titlerow .t-logo{ font-size:34px; letter-spacing:2px; line-height:1.15; }
+.sr-cb-border{ border-image:repeating-conic-gradient(#e8e8e8 0turn 0.25turn,
+  #101010 0turn 0.5turn) 0 0 / 16px / 0 stretch; border-style:solid;
+  border-width:16px; box-sizing:border-box; }
+.sr-sub{ color:#8fd6ff; font-family:'Press Start 2P',monospace;
+  font-size:9px; letter-spacing:3px; text-align:center; margin:6px 0 18px; }
+
+/* ── Utility classes extracted from drive.js inline styles ─────────────── */
+.sr-feat-tag{color:#a6ffc8;font-size:10px;font-weight:bold;letter-spacing:0.6px;text-align:center}
+.sr-feat-warn{font-size:9.5px;margin-bottom:3px;font-weight:bold}
+.sr-feat-warn.fire{color:#ff9a3c}
+.sr-feat-warn.water{color:#5fd8ff}
+.sr-feat-warn.long{color:#ffd23a}
+.sr-detail-name{color:#cfe8ff;font-size:20px;margin-bottom:2px}
+.sr-detail-sub{color:#5f9ec0;font-size:11px;margin-bottom:10px}
+.sr-detail-label{color:#a6ffc8;font-size:11px;font-weight:bold;letter-spacing:1px;margin-bottom:3px}
+.sr-detail-list{margin:0 0 10px;padding-left:16px;color:#cfe8ff;font-size:11px;line-height:1.4}
+.sr-detail-body{color:#cfe8ff;font-size:10.5px;line-height:1.55}
+.algo-section-head{color:#0fd;margin-bottom:6px;font-size:12px;font-weight:bold}
+.algo-param-row{display:flex;align-items:center;gap:8px;padding:3px 6px;border-bottom:1px solid #234}
+.algo-param-name{color:#adf;white-space:nowrap;padding:3px 6px}
+.algo-param-bar{background:#123;height:8px;border-radius:4px;overflow:hidden}
+.algo-param-fill{background:linear-gradient(90deg,#0af,#0fd);height:100%}
+.algo-param-val{padding:3px 6px;color:#fff;text-align:right;font-family:monospace}
+.algo-param-desc{padding:3px 6px;color:#789;font-size:9px}
+
+/* ── SUPER RACING: two-tile layout ──────────────────────────────────────── */
+@keyframes srPulse{
+  0%,100%{border-color:#39ff14;box-shadow:0 0 10px #39ff1433, inset 0 0 6px #39ff1418}
+  50%    {border-color:#8fffa0;box-shadow:0 0 26px #39ff1477, inset 0 0 14px #39ff1430}
+}
+/* Selected-value glow in edit mode */
+@keyframes srSelGlow{
+  0%,100%{box-shadow:0 0 6px #39ff1466, inset 0 0 5px #39ff1433}
+  50%    {box-shadow:0 0 16px #39ff14cc, inset 0 0 10px #39ff1455}
+}
+.sr-outer{display:flex;flex-direction:column;align-items:stretch;
+  width:100%;height:100%;padding:36px 12px 10px;box-sizing:border-box;gap:4px;
+  position:relative}
+
+/* Logos: top-left and top-right corners */
+#_sr_logo,#_sr_logo2{position:absolute;top:6px;z-index:6;pointer-events:none;
+  display:block !important;visibility:visible !important;opacity:1 !important}
+#_sr_logo{left:12px;top:89px}
+#_sr_logo2{right:12px}
+#_sr_logo .t-logo,#_sr_logo2 .t-logo{font-size:clamp(10px,1.2vw,16px);
+  letter-spacing:0.06em;display:inline-block !important;
+  visibility:visible !important;opacity:1 !important}
+.sr-hint{font-family:'Press Start 2P',monospace;font-size:clamp(6px,0.7vw,9px);
+  letter-spacing:1.1px;color:#6a9aba;flex:0 0 auto;text-align:center;
+  margin:0 0 1px}
+
+.sr-bigtile{width:100%;flex:1 1 0;min-height:0;background:#060d18;
+  /* 20 px shorter than the available half so the enlarged corner logo has
+     clear room above without overlapping the first tile. */
+  max-height:calc(50% - 20px);
+  border:2px solid #1e3a30;border-radius:8px;padding:7px 10px;
+  box-sizing:border-box;cursor:pointer;overflow:hidden;
+  display:flex;flex-direction:column;transition:border-color .12s}
+.sr-bigtile:hover{border-color:#3a8a64}
+.sr-bigtile.sr-focus{animation:srPulse 2.4s ease-in-out infinite}
+.sr-bigtile.sr-editing{animation:srPulse 1.1s ease-in-out infinite}
+
+.sr-tile-head{display:flex;justify-content:space-between;align-items:baseline;
+  margin-bottom:3px;flex:0 0 auto}
+.sr-tile-label{font-family:'Press Start 2P',monospace;
+  font-size:clamp(10px,1.25vw,16px);color:#d4efff;letter-spacing:1.4px}
+.sr-tile-num{font-family:'Press Start 2P',monospace;
+  font-size:clamp(8px,1.0vw,13px);color:#7fce9e;letter-spacing:1px}
+.sr-tile-desc{font-size:clamp(10px,1.05vw,13px);color:#9ab8d0;
+  margin-bottom:4px;flex:0 0 auto;line-height:1.3}
+
+.sr-tile-body{display:flex;gap:8px;flex:1 1 0;min-height:0;align-items:stretch;
+  position:relative}
+.sr-prev{flex:0 0 auto;height:100%;width:auto;aspect-ratio:4/3;
+  border-radius:6px;border:1px solid #1a3a5a;background:#08101e;display:block;
+  position:relative;z-index:2}
+
+/* Columns tightened to 2px so the extras/visual panel can be wider */
+/* Columns: label+bar+value tight together, clear gap BETWEEN columns */
+.sr-cols{display:flex;gap:14px;flex:1 1 0;min-width:0;min-height:0;overflow:hidden}
+.sr-col{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:4px;
+  padding-right:0}
+.sr-psec{min-width:0}
+/* Fully opaque — no transparency on any label text */
+.sr-psec-t{font-family:'Press Start 2P',monospace;font-size:clamp(6.6px,0.78vw,10px);
+  letter-spacing:0.7px;margin-bottom:2px;opacity:1}
+.sr-prow{display:grid;grid-template-columns:1fr 30px 32px;gap:1px;
+  align-items:center;font-size:clamp(8.8px,0.93vw,12px);line-height:1.26;
+  padding:0 2px;border-radius:3px;transition:background .1s}
+/* Glowing selected row */
+.sr-prow.sr-sel{background:#39ff1428;outline:1px solid #39ff14aa;
+  animation:srSelGlow 1.3s ease-in-out infinite}
+.sr-prow.sr-sel .sr-pk{color:#d8ffd0;text-shadow:0 0 6px #39ff1499}
+.sr-prow.sr-sel .sr-pv{color:#eaffe4;text-shadow:0 0 6px #39ff1499}
+.sr-pk{color:#bcd8e8;opacity:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sr-pbar{height:4px;background:#132030;border-radius:2px;overflow:hidden}
+.sr-pbar i{display:block;height:100%;border-radius:2px}
+.sr-pv{color:#eaf6ff;opacity:1;text-align:right;font-family:monospace;
+  font-size:clamp(8.8px,0.93vw,12px)}
+
+/* Extras + visual preview panel */
+.sr-extras{flex:0 0 auto;width:clamp(150px,16vw,224px);
+  display:flex;flex-direction:column;gap:3px;min-height:0;overflow:hidden;
+  border-left:1px solid #1a3a4a;padding-left:8px}
+.sr-seed{font-family:monospace;font-size:clamp(8.8px,0.93vw,12px);
+  color:#7fce9e;margin-bottom:3px}
+.sr-erow{display:grid;grid-template-columns:1fr 34px 50px;gap:1px;
+  align-items:center;font-size:clamp(8.8px,0.93vw,12px);line-height:1.3;
+  padding:1px 3px;border-radius:3px;transition:background .1s}
+.sr-erow.sr-sel{background:#ffd23a28;outline:1px solid #ffd23aaa;
+  animation:srSelGlow 1.3s ease-in-out infinite}
+.sr-erow.sr-sel .sr-ek{color:#fff4d0;text-shadow:0 0 6px #ffd23a99}
+.sr-erow.sr-sel .sr-ev{color:#fffbe8;text-shadow:0 0 6px #ffd23a99}
+.sr-ek{color:#d0e4f4;opacity:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sr-ev{color:#fff0b8;opacity:1;text-align:right;font-family:monospace;
+  font-size:clamp(7.7px,0.86vw,11px)}
+.sr-swatch{width:100%;height:10px;border-radius:2px;border:1px solid #2a3a4a}
+
+/* Biome / colour-scheme visual box */
+.sr-visbox{margin-top:5px;opacity:1;background:transparent;display:flex;flex-direction:column;gap:2px;
+  align-items:center;flex:0 0 auto}
+.sr-vis-t{font-family:'Press Start 2P',monospace;font-size:clamp(5.5px,0.66vw,8px);
+  color:#8fd6ff;letter-spacing:1px;align-self:flex-start}
+#_sr_vis{width:100%;height:auto;aspect-ratio:3/2;border-radius:4px;
+  border:1px solid #24445a;display:block;background:#0a1420 !important;
+  opacity:1 !important;mix-blend-mode:normal !important;
+  isolation:isolate;backdrop-filter:none !important}
+.sr-vis-name{font-family:'Press Start 2P',monospace;
+  font-size:clamp(5.5px,0.66vw,8px);color:#9fe8b8;letter-spacing:1px}
+
+.sr-editnote{margin-top:auto;font-family:'Press Start 2P',monospace;
+  font-size:clamp(5.5px,0.66vw,8.5px);color:#5a8aaa;letter-spacing:0.7px;
+  padding-top:4px;line-height:1.5}
+
+/* ── SR menu takes over the WaterFX canvas ────────────────────────────────
+   #zs-waterfx is normally pinned full-screen with !important. The Super
+   Racing menu needs it confined to the preview box, so a body-level class
+   releases those locks and lets the inline geometry apply. */
+body.zs-sr-water #zs-waterfx{
+  position:fixed!important;
+  left:auto!important;top:auto!important;
+  width:auto!important;height:auto!important;
+  display:block!important;
+}
+body.zs-sr-water #zs-waterfx.zs-nofluid{display:block!important}
+
+/* Pause screen branding logo (drawn inside the shield) */
+#_pause_logo .t-logo{display:inline-block!important;visibility:visible!important;opacity:1;letter-spacing:2px;line-height:1}
+
+/* ═══ DEMO PERFORMANCE: TITLE LOGO REPAINTS
+   The attract demo runs behind the title screen. The title logos are huge text
+   (326px) filled via background-clip:text under a saturate/brightness/contrast
+   filter, and their `agonizing-fire` animation moves background-position — a
+   property browsers cannot animate on the GPU compositor, so both logos (and
+   their ::after copies) were repainted 60 times a second, competing with the
+   game for the main thread. The fire flow now advances in discrete steps
+   (~6 per second, the same 12-15s cycle) and each logo gets its own compositing
+   layer so the transform-based sway never repaints. Timing functions follow
+   the order of the existing animation lists. */
+#title-logo-row .t-logo{
+  will-change:transform;
+  animation-timing-function:cubic-bezier(0.15,0.85,0.35,1.1),steps(90,end),ease-in-out!important;
+}
+#title-logo-row .t-logo::after{
+  animation-timing-function:ease-in-out,steps(72,end)!important;
+}
+
+/* Super Racing: the preset's description sits to the right of its title, and
+   the upper random/edit tile is taller than the preset tile so the whole
+   Mechanics section of the editor fits. */
+/* Side by side: random/edit tile 75% on the left, preset tile 25% on the right. */
+.sr-row{display:flex;flex-direction:row;align-items:stretch;gap:8px;flex:1 1 0;min-height:0;width:100%}
+#_sr_rand.sr-bigtile{flex:3 1 0;min-width:0}
+#_sr_preset.sr-bigtile{flex:1 1 0;min-width:0}
+.sr-preset-desc{font-size:clamp(9px,0.9vw,12px);color:#9ab8d0;line-height:1.35;margin:2px 0 6px;flex:0 0 auto}
+.sr-preset-body{display:flex;align-items:flex-start;justify-content:center}
+.sr-preset-body .sr-prev{width:100%;height:auto;max-width:100%}
+.sr-tile-desc-inline{flex:1 1 auto;min-width:0;margin:0 12px;font-size:clamp(9px,0.95vw,12px);color:#9ab8d0;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;align-self:center}
+
+/* ── Moved from drive.js (inline cssText) ───────────────────────────────── */
+#_pause_logo{position:fixed;z-index:2000005;pointer-events:none;transform:translateX(-50%);text-align:center;white-space:nowrap}
+#fps-copy{position:fixed;z-index:2147483000;pointer-events:auto;font:10px monospace;line-height:1;padding:2px 5px;
+  border:1px solid #19c8ff;border-radius:3px;background:rgba(4,10,22,0.92);color:#9fe6ff;cursor:pointer;white-space:nowrap}
+.zs-clip-ta{position:fixed;left:-9999px;top:0}
+#zs-waterfx.zs-wfx-off{pointer-events:none;display:none;will-change:transform;transform:translateZ(0)}
+#zs-waterfx.zs-wfx-menu{z-index:1499;display:block;opacity:1;pointer-events:none}
+
+/* Super Racing: both tiles use the full height below a 70px offset. */
+.sr-row{margin-top:70px;flex:1 1 0;min-height:0;align-items:stretch}
+/* The base .sr-bigtile rule caps tiles at calc(50% - 20px) from the old stacked
+   layout; side by side, both tiles take the full height. */
+#_sr_rand.sr-bigtile,#_sr_preset.sr-bigtile{height:auto;align-self:stretch;min-height:0;max-height:none}
+#_sr_rand.sr-bigtile{overflow-y:auto}
+.sr-preset-heading{font-family:'Press Start 2P',monospace;font-size:clamp(9px,0.9vw,12px);letter-spacing:2px;
+  color:#5fe0a0;margin:0 0 6px;flex:0 0 auto}
+
+/* Super Racing random/edit tile: the full-height tile made the preview (height:100%,
+   fixed aspect) huge, squeezing the settings columns. Cap the preview so the
+   editable names and values have the room. */
+#_sr_rand .sr-tile-body{display:flex;flex-direction:row;align-items:flex-start;gap:10px}
+#_sr_rand .sr-prev{flex:0 0 auto;width:min(34%,520px);height:auto;max-height:100%;align-self:flex-start}
+#_sr_rand .sr-cols{flex:1 1 0;min-width:0}
