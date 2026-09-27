@@ -222,3 +222,7 @@ Over 40 seeds, speedway banking appears on 30 tracks. The feature count and its 
    | 148 | Drone weave | A low camera that sweeps from side to side. |
    | 149 | Crane dive | Drops from high above to road level. |
    | 150 | Bank rider | Rolls with the track banking and the loops. |
+6. **Tunnel bore blinking red and white.**
+   - **Cause:** "intense" animated tunnels (1 in 5 animated tunnels) doubled their light by adding the wall frame onto itself (additive blend). That saturated every bright near ring to pure white while the far rings kept the tunnel's hue. As the rings streamed past, the bore strobed between the hue (red on a red tunnel) and white.
+   - **Fix:** intense walls now get their strength from more opaque, thicker strokes, with lightness capped. They keep their colour.
+   - **Measured** by sampling every frame through the entrances and exits of 5 tunnels: up to 28% of the screen jumped to white between frames before the fix, and 0% after.

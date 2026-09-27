@@ -4425,7 +4425,12 @@ function strokeRun(ctx, pts, bright, d, hue){
   /* Colour now comes from the selected palette rather than a fixed
      hue/saturation pair. _pal is resolved once when the tunnel is shown. */
   var pc = (_pal || PALETTES.flat)(hue, bright, _PS);
-  ctx.strokeStyle = hslCss(pc[0], pc[1], alpha);
+  /* INTENSE walls are denser and more opaque, never lighter: the lightness is
+     capped so the rings keep the tunnel's hue instead of burning out to white
+     (see the note at the end of frame()). */
+  var lit = pc[1], al = alpha;
+  if(_int > 1){ lit = Math.min(0.60, lit); al = Math.min(1, alpha * 1.9); }
+  ctx.strokeStyle = hslCss(pc[0], lit, al);
   ctx.lineWidth = (0.6 + near * 3.4) * (_int > 1 ? 1.7 : 1);
   ctx.beginPath();
   ctx.moveTo(pts[0][0], pts[0][1]);
@@ -4553,22 +4558,20 @@ function frame(dt, speed){
     var segs = Math.max(40, Math.round((d < 0.7 ? 110 : 64) * (0.55 + 0.45 * _tq)));     // more detail on the near, larger rings
     drawRing(ctx, vw, vh, fn, d, vCoord, _hue, segs);
   }
-  /* INTENSE TUNNELS (request 4 item 8): the finished frame is added onto
-     itself — exactly double the light, still inside the road clip — with
-     thicker strokes (strokeRun) and a faster flow (above). */
-  if(_int > 1){
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.globalAlpha = Math.min(1, _int - 1);
-    ctx.drawImage(_cv, 0, 0);
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = 'source-over';
-  }
+  /* INTENSE TUNNELS (request 4 item 8): thicker, more opaque strokes
+     (strokeRun) and a faster flow (above). */
+  /* The frame used to be added onto itself ('lighter') for double the light.
+     Additive light saturates: every bright near ring blew out to pure white
+     while the fainter far rings kept their hue, so as the rings streamed
+     past the bore strobed between the tunnel colour (red on a red tunnel)
+     and white. Intensity now comes from opacity and stroke width in
+     strokeRun, which keeps the hue. */
   ctx.restore();
 }
 
 global.TunnelFX = {
   show: show, hide: hide, frame: frame,
-  /* 1 = normal, 2 = twice as intense (see the end of frame()). */
+  /* 1 = normal, 2 = twice as intense (denser, more opaque strokes; see strokeRun). */
   setIntensity: function(k){ _int = Math.max(1, Math.min(2, +k || 1)); },
   /* Forced pattern / palette names (null = automatic) and a flow-speed factor. */
   setForce: function(p, c, spd){ _forceP = p && p !== 'auto' ? p : null; _forceC = c && c !== 'auto' ? c : null;
